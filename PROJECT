@@ -1,0 +1,28 @@
+domain: msft.isd.coe.io
+layout:
+- go.kubebuilder.io/v3
+plugins:
+  manifests.sdk.operatorframework.io/v2: {}
+  scorecard.sdk.operatorframework.io/v2: {}
+projectName: azure-sql-mi
+repo: github.com/pplavetzki/azure-sql-mi
+resources:
+- api:
+    crdVersion: v1
+    namespaced: true
+  controller: true
+  domain: msft.isd.coe.io
+  group: actions
+  kind: DBCreate
+  path: github.com/pplavetzki/azure-sql-mi/api/v1alpha1
+  version: v1alpha1
+- api:
+    crdVersion: v1
+    namespaced: true
+  controller: true
+  domain: msft.isd.coe.io
+  group: actions
+  kind: Database
+  path: github.com/pplavetzki/azure-sql-mi/api/v1alpha1
+  version: v1alpha1
+version: "3"

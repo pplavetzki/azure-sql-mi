@@ -1,0 +1,24 @@
+# permissions for end users to edit dbcreates.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: dbcreate-editor-role
+rules:
+- apiGroups:
+  - actions.msft.isd.coe.io
+  resources:
+  - dbcreates
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - actions.msft.isd.coe.io
+  resources:
+  - dbcreates/status
+  verbs:
+  - get

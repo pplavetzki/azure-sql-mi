@@ -1,0 +1,103 @@
+
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.6.1
+  creationTimestamp: null
+  name: databases.actions.msft.isd.coe.io
+spec:
+  group: actions.msft.isd.coe.io
+  names:
+    kind: Database
+    listKind: DatabaseList
+    plural: databases
+    singular: database
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - description: Name of Database
+      jsonPath: .spec.name
+      name: Database Name
+      type: string
+    - description: Status of Database
+      jsonPath: .status.status
+      name: Database Status
+      type: string
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: Database is the Schema for the databases API
+        properties:
+          apiVersion:
+            description: 'APIVersion defines the versioned schema of this representation
+              of an object. Servers should convert recognized schemas to the latest
+              internal value, and may reject unrecognized values. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources'
+            type: string
+          kind:
+            description: 'Kind is a string value representing the REST resource this
+              object represents. Servers may infer this from the endpoint the client
+              submits requests to. Cannot be updated. In CamelCase. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds'
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: DatabaseSpec defines the desired state of Database
+            properties:
+              credentials:
+                description: CredentialsSecret is the name of the secret to use for
+                  the sql server login credentials
+                properties:
+                  name:
+                    description: Name is the Database name.
+                    type: string
+                  passwordKey:
+                    type: string
+                  usernameKey:
+                    type: string
+                required:
+                - name
+                - passwordKey
+                - usernameKey
+                type: object
+              defaultLanguage:
+                description: DefaultLanguage
+                type: string
+              name:
+                description: Name is the Database name.
+                type: string
+              port:
+                description: Port where Sql Server is listening
+                type: integer
+              server:
+                description: Server is the sql server (fqdn/ip addresss)
+                type: string
+            required:
+            - credentials
+            - name
+            - port
+            - server
+            type: object
+          status:
+            description: DatabaseStatus defines the observed state of Database
+            properties:
+              status:
+                description: 'INSERT ADDITIONAL STATUS FIELD - define observed state
+                  of cluster Important: Run "make" to regenerate code after modifying
+                  this file'
+                type: string
+            required:
+            - status
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
+status:
+  acceptedNames:
+    kind: ""
+    plural: ""
+  conditions: []
+  storedVersions: []
