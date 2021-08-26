@@ -2,7 +2,7 @@
 
 This is a K8S operator to interact with MS SQL Managed Instance
 
-## TLDR;
+## TL;DR
 
 This project was genereated using [Red Hat's Operator SDK](https://sdk.operatorframework.io/).
 
