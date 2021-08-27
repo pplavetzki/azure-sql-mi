@@ -159,33 +159,9 @@ func (db *MSSql) CreateDatabase(ctx context.Context, spec *actionsv1alpha1.Datab
 	if err != nil {
 		return nil, err
 	}
-	rows, err := db.DB.Query(fmt.Sprintf("CREATE DATABASE %s;", spec.Spec.Name))
+	_, err = db.DB.Exec(fmt.Sprintf("CREATE DATABASE %s;", spec.Spec.Name))
 	if err != nil {
 		return nil, err
-	}
-	defer rows.Close()
-	cols, err := rows.Columns()
-	if err != nil {
-		return nil, err
-	}
-	if cols == nil {
-		return nil, nil
 	}
 	return db.FindDatabaseID(ctx, spec)
-
-	// stmt, err := db.DB.Prepare(fmt.Sprintf("CREATE DATABASE %s;", spec.Name))
-	// if err != nil {
-	// 	return err
-	// }
-	// defer stmt.Close()
-
-	// row := stmt.QueryRow()
-	// var catalog string
-	// var tableName string
-	// err = row.Scan(&catalog, &tableName)
-	// if err != nil {
-	// 	return err
-	// }
-
-	// logger.Info("queried", "catalog", catalog, "tableName", tableName)
 }
