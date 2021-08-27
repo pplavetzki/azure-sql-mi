@@ -118,11 +118,23 @@ func (db *MSSql) DeleteDatabase(ctx context.Context, spec *actionsv1alpha1.Datab
 	if err != nil {
 		return err
 	}
-	rows, err := db.DB.Query(fmt.Sprintf("DROP DATABASE %s;", spec.Spec.Name))
+	var dbID int64
+	result, err := db.DB.Query(fmt.Sprintf("SELECT DB_ID(N'%s') AS [ID];", spec.Spec.Name))
 	if err != nil {
 		return err
 	}
-	defer rows.Close()
+	defer result.Close()
+	result.Next()
+
+	if err = result.Scan(&dbID); err == nil {
+		rows, err := db.DB.Query(fmt.Sprintf("DROP DATABASE %s;", spec.Spec.Name))
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+	} else {
+		logger.Info("database doesn't exist returning nil")
+	}
 
 	return nil
 }

@@ -53,12 +53,16 @@ type DatabaseStatus struct {
 	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
 	Status string `json:"status"`
+	// Conditions the array of conditions of the object
+	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }
 
 //+kubebuilder:object:root=true
 //+kubebuilder:subresource:status
+//+kubebuilder:printcolumn:name="Database ID",type="string",JSONPath=`.metadata.annotations.mssql/db_id`,description="MSSql Database ID"
 //+kubebuilder:printcolumn:name="Database Name",type=string,JSONPath=`.spec.name`,description="Name of Database"
 //+kubebuilder:printcolumn:name="Database Status",type=string,JSONPath=`.status.status`,description="Status of Database"
+//+kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
 
 // Database is the Schema for the databases API
 type Database struct {

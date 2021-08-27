@@ -31,6 +31,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	corev1 "k8s.io/api/core/v1"
+	meta "k8s.io/apimachinery/pkg/api/meta"
 
 	"github.com/go-logr/logr"
 	actionsv1alpha1 "github.com/pplavetzki/azure-sql-mi/api/v1alpha1"
@@ -164,6 +165,7 @@ func (r *DatabaseReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		}
 	} else {
 		var dbID string
+		meta.SetStatusCondition(&db.Status.Conditions, *db.CreatingCondition())
 		r.updateDatabaseStatus(db, "Creating")
 		id, err := msSQL.CreateDatabase(ctx, db)
 		if err != nil {
@@ -185,6 +187,7 @@ func (r *DatabaseReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 			logger.Info("failed to patch the database with the database id", "error", err.Error())
 			return ctrl.Result{}, err
 		}
+		meta.SetStatusCondition(&db.Status.Conditions, *db.CreatedCondition())
 		r.updateDatabaseStatus(db, "Created")
 	}
 
