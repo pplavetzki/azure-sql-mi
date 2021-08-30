@@ -33,14 +33,10 @@ rules:
   - patch
   - update
 - apiGroups:
-  - batch
+  - ""
   resources:
-  - jobs
+  - secrets
   verbs:
-  - create
-  - delete
   - get
   - list
-  - patch
-  - update
   - watch

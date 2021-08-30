@@ -1,11 +1,11 @@
 apiVersion: actions.msft.isd.coe.io/v1alpha1
 kind: Database
 metadata:
-  name: database-rbc
+  name: database-rbc1
 spec:
   # Add fields here
-  name: MyDatabase2
-  server: 20.62.110.48
+  name: MyDatabase1
+  server: 52.167.42.243
   port: 1433
   credentials:
     name: credentials
