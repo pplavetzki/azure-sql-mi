@@ -66,7 +66,7 @@ func (a AnnotationPatch) Data(obj client.Object) ([]byte, error) {
 
 func (r *DatabaseReconciler) updateDatabaseStatus(db *actionsv1alpha1.Database, status string) error {
 	db.Status.Status = status
-	return r.Client.Status().Update(context.TODO(), db, &client.UpdateOptions{})
+	return r.Status().Update(context.TODO(), db)
 }
 
 //+kubebuilder:rbac:groups=actions.msft.isd.coe.io,resources=databases,verbs=get;list;watch;create;update;patch;delete
@@ -148,27 +148,41 @@ func (r *DatabaseReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	/******************************************************************************************************************/
 
 	var dbName *string
-	var currentDBName string
 
 	setID := db.Annotations["mssql/db_id"]
 	if setID != "" {
 		valId, _ := strconv.Atoi(setID)
-		dbName, _ = msSQL.FindDatabaseName(ctx, valId)
+		dbName, err = msSQL.FindDatabaseName(ctx, valId)
 
-		if dbName != nil {
-			currentDBName = *dbName
+		// This means that the database has probably been deleted outside of the CRD
+		if err != nil {
+			return ctrl.Result{}, err
 		}
-		// Are we doing a Alter here???
-		if currentDBName != "" && db.Spec.Name != currentDBName {
-			logger.Info("current db name", "have", currentDBName, "want", db.Spec.Name)
-			logger.Info("want to do an update of the database name if we can")
+		if dbName == nil {
+			return ctrl.Result{}, fmt.Errorf("database not found, has it been deleted?")
 		}
+
+		meta.SetStatusCondition(&db.Status.Conditions, *db.UpdatingCondition())
+		r.updateDatabaseStatus(db, "Updating")
+
+		err := msSQL.AlterDatabase(ctx, db)
+		if err != nil {
+			meta.SetStatusCondition(&db.Status.Conditions, *db.ErroredCondition())
+			r.updateDatabaseStatus(db, "Error")
+			logger.Info("failed to alter the database", "name", err.Error())
+			return ctrl.Result{}, err
+		}
+
+		meta.SetStatusCondition(&db.Status.Conditions, *db.UpdatedCondition())
+		r.updateDatabaseStatus(db, "Updated")
+
 	} else {
 		var dbID string
 		meta.SetStatusCondition(&db.Status.Conditions, *db.CreatingCondition())
 		r.updateDatabaseStatus(db, "Creating")
 		id, err := msSQL.CreateDatabase(ctx, db)
 		if err != nil {
+			meta.SetStatusCondition(&db.Status.Conditions, *db.ErroredCondition())
 			r.updateDatabaseStatus(db, "Error")
 			logger.Info("failed to create the database", "name", err.Error())
 			return ctrl.Result{}, err

@@ -52,6 +52,9 @@ spec:
           spec:
             description: DatabaseSpec defines the desired state of Database
             properties:
+              collationName:
+                description: CollationName
+                type: string
               credentials:
                 description: CredentialsSecret is the name of the secret to use for
                   the sql server login credentials

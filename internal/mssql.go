@@ -4,12 +4,14 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 
 	_ "github.com/denisenkom/go-mssqldb"
 	actionsv1alpha1 "github.com/pplavetzki/azure-sql-mi/api/v1alpha1"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
+// MSSql interaction with sql server
 type MSSql struct {
 	Server   string `json:"server"`
 	Port     int    `json:"port"`
@@ -19,6 +21,7 @@ type MSSql struct {
 	DB *sql.DB
 }
 
+// NewMSSql contructor pattern
 func NewMSSql(server, user, password string, port int) *MSSql {
 	return &MSSql{
 		Server:   server,
@@ -28,6 +31,7 @@ func NewMSSql(server, user, password string, port int) *MSSql {
 	}
 }
 
+// FindDatabaseID finds the db id
 func (db *MSSql) FindDatabaseID(ctx context.Context, spec *actionsv1alpha1.Database) (*string, error) {
 	_ = log.FromContext(ctx)
 	logger := log.Log
@@ -159,9 +163,59 @@ func (db *MSSql) CreateDatabase(ctx context.Context, spec *actionsv1alpha1.Datab
 	if err != nil {
 		return nil, err
 	}
-	_, err = db.DB.Exec(fmt.Sprintf("CREATE DATABASE %s;", spec.Spec.Name))
+	_, err = db.DB.Exec(buildDatabaseSQL("CREATE", spec))
 	if err != nil {
 		return nil, err
 	}
 	return db.FindDatabaseID(ctx, spec)
+}
+
+func (db *MSSql) AlterDatabase(ctx context.Context, spec *actionsv1alpha1.Database) error {
+	_ = log.FromContext(ctx)
+	logger := log.Log
+
+	logger.Info("altering the database", "name", spec.Spec.Name)
+	// Build connection string
+	connString := fmt.Sprintf("server=%s;user id=%s;password=%s;port=%d", db.Server, db.User, db.Password, db.Port)
+
+	var err error
+
+	// Create connection pool
+	db.DB, err = sql.Open("sqlserver", connString)
+	if err != nil {
+		return err
+	}
+	defer db.DB.Close()
+	err = db.DB.Ping()
+	if err != nil {
+		return err
+	}
+
+	sql := buildDatabaseSQL("ALTER", spec)
+	if len(sql) > 0 {
+		_, err = db.DB.Exec(sql)
+		if err != nil {
+			return err
+		}
+	} else {
+		logger.Info("nothing to change, not altering database", "name", spec.Spec.Name)
+	}
+
+	return nil
+}
+
+func buildDatabaseSQL(verb string, spec *actionsv1alpha1.Database) string {
+	var b strings.Builder
+	var count int8 = 0
+
+	fmt.Fprintf(&b, "%s DATABASE %s ", verb, spec.Spec.Name)
+
+	if spec.Spec.CollationName != "" {
+		fmt.Fprintf(&b, "Collate %s", spec.Spec.CollationName)
+		count++
+	}
+	if verb == "ALTER" && count == 0 {
+		return ""
+	}
+	return b.String()
 }

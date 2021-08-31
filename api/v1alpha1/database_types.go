@@ -46,6 +46,8 @@ type DatabaseSpec struct {
 	Port int `json:"port"`
 	// DefaultLanguage
 	DefaultLanguage string `json:"defaultLanguage,omitempty"`
+	// CollationName
+	CollationName string `json:"collationName,omitempty"`
 }
 
 // DatabaseStatus defines the observed state of Database
