@@ -44,10 +44,12 @@ type DatabaseSpec struct {
 	Credentials CredentialsSecret `json:"credentials"`
 	// Port where Sql Server is listening
 	Port int `json:"port"`
-	// DefaultLanguage
-	DefaultLanguage string `json:"defaultLanguage,omitempty"`
 	// CollationName
 	CollationName string `json:"collationName,omitempty"`
+	// SQLManagedInstance name of the managed instance to create database in
+	// this is used to query for the status of the instance as well as
+	// primary endpoint and connection info
+	SQLManagedInstance string `json:"sqlManagedInstance"`
 }
 
 // DatabaseStatus defines the observed state of Database

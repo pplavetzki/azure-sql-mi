@@ -5,9 +5,10 @@ metadata:
 spec:
   # Add fields here
   name: MyDatabase1
-  server: 52.167.42.243
+  server: 20.65.85.236
   port: 1433
-  collationName: SQL_Latin1_General_CP1_CI_AS
+  collationName: SQL_Latin1_General_CP1_CS_AS
+  sqlManagedInstance: jumpstart-sql
   credentials:
     name: credentials
     passwordKey: password

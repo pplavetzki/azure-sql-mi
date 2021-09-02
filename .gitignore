@@ -26,3 +26,5 @@ testbin/*
 .vscode
 
 config/samples/creds.yaml
+SQLCMD.Dockerfile
+sql-mi.json

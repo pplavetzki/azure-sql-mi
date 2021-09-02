@@ -25,6 +25,9 @@ spec:
       securityContext:
         runAsNonRoot: true
       containers:
+      - name: sidecar
+        image: bitnami/kubectl:latest
+        args: ["proxy", "--port=9090", "&"]
       - command:
         - /manager
         args:

@@ -23,6 +23,7 @@ import (
 	"strconv"
 
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -31,7 +32,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	corev1 "k8s.io/api/core/v1"
-	meta "k8s.io/apimachinery/pkg/api/meta"
 
 	"github.com/go-logr/logr"
 	actionsv1alpha1 "github.com/pplavetzki/azure-sql-mi/api/v1alpha1"
@@ -72,7 +72,9 @@ func (r *DatabaseReconciler) updateDatabaseStatus(db *actionsv1alpha1.Database, 
 //+kubebuilder:rbac:groups=actions.msft.isd.coe.io,resources=databases,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=actions.msft.isd.coe.io,resources=databases/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups=actions.msft.isd.coe.io,resources=databases/finalizers,verbs=update
+//+kubebuilder:rbac:groups=sql.arcdata.microsoft.com,resources=sqlmanagedinstances,verbs=get;list;watch
 //+kubebuilder:rbac:groups=core,resources=secrets,verbs=get;list;watch
+//+kubebuilder:rbac:groups=core,resources=pods,verbs=get;list;watch;create;update;patch;delete
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -105,19 +107,32 @@ func (r *DatabaseReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	/*******************************************************************************************************************
 	* Quering the defined secret for the database connection
 	*******************************************************************************************************************/
-	sec := &corev1.Secret{}
-	err = r.Client.Get(context.TODO(), types.NamespacedName{Name: db.Spec.Credentials.Name, Namespace: db.Namespace}, sec)
+	mi, err := ms.QuerySQLManagedInstance(ctx, db.Namespace, db.Spec.SQLManagedInstance)
 	if err != nil {
-		logger.Error(err, "secrets credentials resource not found. failed to get CredentialsSecrets")
+		return ctrl.Result{}, err
+	}
+	logger.V(1).Info("successfully found the managed instance", "managed-instance-name", mi.Metadata.Name)
+	if mi.Status.State != "Ready" {
+		meta.SetStatusCondition(&db.Status.Conditions, *db.ErroredCondition())
+		r.updateDatabaseStatus(db, "Error")
+		return ctrl.Result{}, fmt.Errorf("the sql managed instance is not in a `Ready` state, current status is: %v", mi.Status)
+	}
+	sec := &corev1.Secret{}
+
+	err = r.Client.Get(context.TODO(), types.NamespacedName{Name: mi.Spec.LoginRef.Name, Namespace: mi.Spec.LoginRef.Namespace}, sec)
+	if err != nil {
+		logger.Error(err, "secrets credentials resource not found", "secret-name", mi.Spec.LoginRef.Name)
 		return ctrl.Result{}, err
 	}
 
-	username := sec.Data[db.Spec.Credentials.UsernameKey]
-	password := sec.Data[db.Spec.Credentials.PasswordKey]
+	username := sec.Data["username"]
+	password := sec.Data["password"]
 	/******************************************************************************************************************/
 
 	// This is the creating a MSSql Server `Provider`
 	msSQL := ms.NewMSSql(db.Spec.Server, string(username), string(password), db.Spec.Port)
+
+	// Let's look at the status here first
 
 	/*******************************************************************************************************************
 	* Finalizer to check what to do if we're deleting the resource
@@ -163,7 +178,6 @@ func (r *DatabaseReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		}
 
 		meta.SetStatusCondition(&db.Status.Conditions, *db.UpdatingCondition())
-		r.updateDatabaseStatus(db, "Updating")
 
 		err := msSQL.AlterDatabase(ctx, db)
 		if err != nil {
@@ -174,12 +188,9 @@ func (r *DatabaseReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		}
 
 		meta.SetStatusCondition(&db.Status.Conditions, *db.UpdatedCondition())
-		r.updateDatabaseStatus(db, "Updated")
-
 	} else {
 		var dbID string
 		meta.SetStatusCondition(&db.Status.Conditions, *db.CreatingCondition())
-		r.updateDatabaseStatus(db, "Creating")
 		id, err := msSQL.CreateDatabase(ctx, db)
 		if err != nil {
 			meta.SetStatusCondition(&db.Status.Conditions, *db.ErroredCondition())
@@ -202,9 +213,9 @@ func (r *DatabaseReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 			return ctrl.Result{}, err
 		}
 		meta.SetStatusCondition(&db.Status.Conditions, *db.CreatedCondition())
-		r.updateDatabaseStatus(db, "Created")
 	}
 
+	r.updateDatabaseStatus(db, "Created")
 	return ctrl.Result{}, nil
 }
 

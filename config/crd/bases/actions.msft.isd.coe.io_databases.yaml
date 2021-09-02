@@ -71,9 +71,6 @@ spec:
                 - passwordKey
                 - usernameKey
                 type: object
-              defaultLanguage:
-                description: DefaultLanguage
-                type: string
               name:
                 description: Name is the Database name.
                 type: string
@@ -83,11 +80,17 @@ spec:
               server:
                 description: Server is the sql server (fqdn/ip addresss)
                 type: string
+              sqlManagedInstance:
+                description: SQLManagedInstance name of the managed instance to create
+                  database in this is used to query for the status of the instance
+                  as well as primary endpoint and connection info
+                type: string
             required:
             - credentials
             - name
             - port
             - server
+            - sqlManagedInstance
             type: object
           status:
             description: DatabaseStatus defines the observed state of Database
