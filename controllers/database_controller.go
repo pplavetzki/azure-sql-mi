@@ -20,7 +20,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strconv"
+	"strings"
+	"time"
 
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -33,9 +34,10 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 
-	"github.com/go-logr/logr"
 	actionsv1alpha1 "github.com/pplavetzki/azure-sql-mi/api/v1alpha1"
 	ms "github.com/pplavetzki/azure-sql-mi/internal"
+	batch "k8s.io/api/batch/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 const databaseFinalizer = "actions.msft.isd.coe.io/finalizer"
@@ -74,7 +76,8 @@ func (r *DatabaseReconciler) updateDatabaseStatus(db *actionsv1alpha1.Database, 
 //+kubebuilder:rbac:groups=actions.msft.isd.coe.io,resources=databases/finalizers,verbs=update
 //+kubebuilder:rbac:groups=sql.arcdata.microsoft.com,resources=sqlmanagedinstances,verbs=get;list;watch
 //+kubebuilder:rbac:groups=core,resources=secrets,verbs=get;list;watch
-//+kubebuilder:rbac:groups=core,resources=pods,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=batch,resources=jobs/status,verbs=get
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -148,7 +151,7 @@ func (r *DatabaseReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		}
 	} else {
 		if controllerutil.ContainsFinalizer(db, databaseFinalizer) {
-			if err = r.finalizeDatabase(ctx, logger, db, msSQL); err != nil {
+			if err = r.finalizeDatabase(ctx, db, msSQL); err != nil {
 				return ctrl.Result{}, err
 			}
 		}
@@ -162,74 +165,222 @@ func (r *DatabaseReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	}
 	/******************************************************************************************************************/
 
-	var dbName *string
-
-	setID := db.Annotations["mssql/db_id"]
-	if setID != "" {
-		valId, _ := strconv.Atoi(setID)
-		dbName, err = msSQL.FindDatabaseName(ctx, valId)
-
-		// This means that the database has probably been deleted outside of the CRD
-		if err != nil {
-			return ctrl.Result{}, err
-		}
-		if dbName == nil {
-			return ctrl.Result{}, fmt.Errorf("database not found, has it been deleted?")
+	/*******************************************************************************************************************
+	* Let's do sync logic here...
+	/******************************************************************************************************************/
+	isJobFinished := func(job *batch.Job) (bool, batch.JobConditionType) {
+		for _, c := range job.Status.Conditions {
+			if (c.Type == batch.JobComplete || c.Type == batch.JobFailed) && c.Status == corev1.ConditionTrue {
+				return true, c.Type
+			}
 		}
 
-		meta.SetStatusCondition(&db.Status.Conditions, *db.UpdatingCondition())
-
-		err := msSQL.AlterDatabase(ctx, db)
-		if err != nil {
-			meta.SetStatusCondition(&db.Status.Conditions, *db.ErroredCondition())
-			r.updateDatabaseStatus(db, "Error")
-			logger.Info("failed to alter the database", "name", err.Error())
-			return ctrl.Result{}, err
-		}
-
-		meta.SetStatusCondition(&db.Status.Conditions, *db.UpdatedCondition())
-	} else {
-		var dbID string
-		meta.SetStatusCondition(&db.Status.Conditions, *db.CreatingCondition())
-		id, err := msSQL.CreateDatabase(ctx, db)
-		if err != nil {
-			meta.SetStatusCondition(&db.Status.Conditions, *db.ErroredCondition())
-			r.updateDatabaseStatus(db, "Error")
-			logger.Info("failed to create the database", "name", err.Error())
-			return ctrl.Result{}, err
-		}
-		if id != nil {
-			dbID = *id
-		} else {
-			return ctrl.Result{}, fmt.Errorf("failed to return the database id for name: %s", db.Spec.Name)
-		}
-		pw := AnnotationPatch{
-			Logger:     logger,
-			DatabaseID: dbID,
-		}
-		err = r.Patch(ctx, db, pw)
-		if err != nil {
-			logger.Info("failed to patch the database with the database id", "error", err.Error())
-			return ctrl.Result{}, err
-		}
-		meta.SetStatusCondition(&db.Status.Conditions, *db.CreatedCondition())
+		return false, ""
 	}
 
-	r.updateDatabaseStatus(db, "Created")
+	var childJobs batch.JobList
+	var status string
+	var condition metav1.Condition
+
+	if err := r.List(ctx, &childJobs, client.InNamespace(req.Namespace), client.MatchingFields{jobOwnerKey: req.Name}); err != nil {
+		logger.Error(err, "unable to list child Jobs")
+		return ctrl.Result{}, err
+	}
+	if len(childJobs.Items) == 0 {
+		job, err := r.createSyncJob(db, mi, msSQL)
+		if err != nil {
+			logger.Error(err, "unable to create sync job")
+			return ctrl.Result{}, err
+		}
+		if err := r.Create(ctx, job); err != nil {
+			logger.Error(err, "unable to create Job for Sync", "job", job)
+			return ctrl.Result{}, err
+		}
+	} else {
+		for _, job := range childJobs.Items {
+			_, finishedType := isJobFinished(&job)
+			switch finishedType {
+			case "": // ongoing
+				status = "Pending"
+				condition = *db.CreatingCondition()
+			case batch.JobFailed:
+				status = "Errored"
+				condition = *db.ErroredCondition()
+			case batch.JobComplete:
+				status = "Created"
+				condition = *db.CreatedCondition()
+			}
+		}
+	}
+
+	meta.SetStatusCondition(&db.Status.Conditions, condition)
+	r.updateDatabaseStatus(db, status)
+	/******************************************************************************************************************/
+
+	// var dbName *string
+
+	// setID := db.Annotations["mssql/db_id"]
+	// if setID != "" {
+	// 	valId, _ := strconv.Atoi(setID)
+	// 	dbName, err = msSQL.FindDatabaseName(ctx, valId)
+
+	// 	// This means that the database has probably been deleted outside of the CRD
+	// 	if err != nil {
+	// 		return ctrl.Result{}, err
+	// 	}
+	// 	if dbName == nil {
+	// 		return ctrl.Result{}, fmt.Errorf("database not found, has it been deleted?")
+	// 	}
+
+	// 	meta.SetStatusCondition(&db.Status.Conditions, *db.UpdatingCondition())
+
+	// 	err := msSQL.AlterDatabase(ctx, db)
+	// 	if err != nil {
+	// 		meta.SetStatusCondition(&db.Status.Conditions, *db.ErroredCondition())
+	// 		r.updateDatabaseStatus(db, "Error")
+	// 		logger.Info("failed to alter the database", "name", err.Error())
+	// 		return ctrl.Result{}, err
+	// 	}
+
+	// 	meta.SetStatusCondition(&db.Status.Conditions, *db.UpdatedCondition())
+	// } else {
+	// 	var dbID string
+	// 	meta.SetStatusCondition(&db.Status.Conditions, *db.CreatingCondition())
+	// 	id, err := msSQL.CreateDatabase(ctx, db)
+	// 	if err != nil {
+	// 		meta.SetStatusCondition(&db.Status.Conditions, *db.ErroredCondition())
+	// 		r.updateDatabaseStatus(db, "Error")
+	// 		logger.Info("failed to create the database", "name", err.Error())
+	// 		return ctrl.Result{}, err
+	// 	}
+	// 	if id != nil {
+	// 		dbID = *id
+	// 	} else {
+	// 		return ctrl.Result{}, fmt.Errorf("failed to return the database id for name: %s", db.Spec.Name)
+	// 	}
+	// 	pw := AnnotationPatch{
+	// 		Logger:     logger,
+	// 		DatabaseID: dbID,
+	// 	}
+	// 	err = r.Patch(ctx, db, pw)
+	// 	if err != nil {
+	// 		logger.Info("failed to patch the database with the database id", "error", err.Error())
+	// 		return ctrl.Result{}, err
+	// 	}
+	// 	meta.SetStatusCondition(&db.Status.Conditions, *db.CreatedCondition())
+	// }
+
+	// r.updateDatabaseStatus(db, "Created")
 	return ctrl.Result{}, nil
 }
 
-func (r *DatabaseReconciler) finalizeDatabase(ctx context.Context, reqLogger logr.Logger, db *actionsv1alpha1.Database, mssql *ms.MSSql) error {
-	if err := mssql.DeleteDatabase(ctx, db); err != nil {
+func (r *DatabaseReconciler) finalizeDatabase(ctx context.Context, db *actionsv1alpha1.Database, mssql *ms.MSSql) error {
+	if err := mssql.DeleteDatabase(ctx, db.Spec.Name); err != nil {
 		return err
 	}
-	reqLogger.Info("Successfully finalized database")
 	return nil
+}
+
+var (
+	jobOwnerKey = ".metadata.controller"
+	apiGVStr    = actionsv1alpha1.GroupVersion.String()
+)
+
+func (r *DatabaseReconciler) createSyncJob(db *actionsv1alpha1.Database, mi *ms.SQLManagedInstance, msSQL *ms.MSSql) (*batch.Job, error) {
+	// We want job names for a given nominal start time to have a deterministic name to avoid the same job being created twice
+	sched := time.Now()
+	name := fmt.Sprintf("%s-%d", db.Name, sched.Unix())
+	endpointInfo := strings.Split(mi.Status.PrimaryEndpoint, ",")
+
+	job := &batch.Job{
+		ObjectMeta: metav1.ObjectMeta{
+			Labels:      make(map[string]string),
+			Annotations: make(map[string]string),
+			Name:        name,
+			Namespace:   db.Namespace,
+		},
+		Spec: batch.JobSpec{
+			Template: corev1.PodTemplateSpec{
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{
+						{
+							Name:  "sync",
+							Image: "paulplavetzki/sync:v0.0.2",
+							// EnvFrom: []corev1.EnvFromSource{
+							// 	corev1.EnvFromSource{
+							// 		SecretRef: &corev1.SecretEnvSource{
+							// 			LocalObjectReference: corev1.LocalObjectReference{
+							// 				Name: "jumpstart-sql-login-secret",
+							// 			},
+							// 		},
+							// 	},
+							// },
+							Env: []corev1.EnvVar{
+								{
+									Name:  "DB_PASSWORD",
+									Value: msSQL.Password,
+								},
+								{
+									Name:  "DB_USER",
+									Value: msSQL.User,
+								},
+								{
+									Name:  "DB_NAME",
+									Value: db.Spec.Name,
+								},
+								{
+									Name:  "DB_PORT",
+									Value: endpointInfo[1],
+								},
+								{
+									Name:  "MS_SERVER",
+									Value: endpointInfo[0],
+								},
+							},
+						},
+					},
+					RestartPolicy: corev1.RestartPolicyOnFailure,
+				},
+			},
+		},
+	}
+	// for k, v := range cronJob.Spec.JobTemplate.Annotations {
+	// 	job.Annotations[k] = v
+	// }
+	// job.Annotations[scheduledTimeAnnotation] = sched.Format(time.RFC3339)
+	// for k, v := range cronJob.Spec.JobTemplate.Labels {
+	// 	job.Labels[k] = v
+	// }
+	if err := ctrl.SetControllerReference(db, job, r.Scheme); err != nil {
+		return nil, err
+	}
+
+	return job, nil
 }
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *DatabaseReconciler) SetupWithManager(mgr ctrl.Manager) error {
+
+	if err := mgr.GetFieldIndexer().IndexField(context.Background(), &batch.Job{}, jobOwnerKey, func(rawObj client.Object) []string {
+		// grab the job object, extract the owner...
+		job := rawObj.(*batch.Job)
+		owner := metav1.GetControllerOf(job)
+		if owner == nil {
+			return nil
+		}
+		// ...make sure it's a CronJob...
+		if owner.APIVersion != apiGVStr || owner.Kind != "Database" {
+			return nil
+		}
+
+		// ...and if so, return it
+		return []string{owner.Name}
+	}); err != nil {
+		return err
+	}
+
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&actionsv1alpha1.Database{}).
+		Owns(&batch.Job{}).
 		Complete(r)
 }

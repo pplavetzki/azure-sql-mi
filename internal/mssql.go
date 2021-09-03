@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	_ "github.com/denisenkom/go-mssqldb"
-	actionsv1alpha1 "github.com/pplavetzki/azure-sql-mi/api/v1alpha1"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
@@ -21,6 +20,10 @@ type MSSql struct {
 	DB *sql.DB
 }
 
+type DatabaseParams struct {
+	CollationName string
+}
+
 // NewMSSql contructor pattern
 func NewMSSql(server, user, password string, port int) *MSSql {
 	return &MSSql{
@@ -32,11 +35,11 @@ func NewMSSql(server, user, password string, port int) *MSSql {
 }
 
 // FindDatabaseID finds the db id
-func (db *MSSql) FindDatabaseID(ctx context.Context, spec *actionsv1alpha1.Database) (*string, error) {
+func (db *MSSql) FindDatabaseID(ctx context.Context, databaseName string) (*string, error) {
 	_ = log.FromContext(ctx)
 	logger := log.Log
 
-	logger.Info("finding the database if it exists by Name", "name", spec.Spec.Name)
+	logger.Info("finding the database if it exists by Name", "name", databaseName)
 	// Build connection string
 	connString := fmt.Sprintf("server=%s;user id=%s;password=%s;port=%d", db.Server, db.User, db.Password, db.Port)
 
@@ -47,27 +50,29 @@ func (db *MSSql) FindDatabaseID(ctx context.Context, spec *actionsv1alpha1.Datab
 	if err != nil {
 		return nil, err
 	}
-	defer db.DB.Close()
 	err = db.DB.Ping()
 	if err != nil {
 		return nil, err
 	}
-	stmt, err := db.DB.Prepare(fmt.Sprintf("SELECT DB_ID(N'%s') AS [ID];", spec.Spec.Name))
+	sqlStmt := "SELECT CAST(recovery_fork_guid AS char(36)) as recovery_fork_guid FROM sys.database_recovery_status drs JOIN sys.databases dbs ON drs.database_id = dbs.database_id WHERE dbs.[name] = '%s'"
+
+	stmt, err := db.DB.Prepare(fmt.Sprintf(sqlStmt, databaseName))
 	if err != nil {
 		return nil, err
 	}
 	defer stmt.Close()
 
 	row := stmt.QueryRow()
-	var id *string
+	var id string
 	err = row.Scan(&id)
 	if err != nil {
 		return nil, err
 	}
-	return id, nil
+
+	return &id, nil
 }
 
-func (db *MSSql) FindDatabaseName(ctx context.Context, id int) (*string, error) {
+func (db *MSSql) FindDatabaseName(ctx context.Context, id string) (*string, error) {
 	_ = log.FromContext(ctx)
 	logger := log.Log
 
@@ -82,31 +87,32 @@ func (db *MSSql) FindDatabaseName(ctx context.Context, id int) (*string, error) 
 	if err != nil {
 		return nil, err
 	}
-	defer db.DB.Close()
 	err = db.DB.Ping()
 	if err != nil {
 		return nil, err
 	}
-	stmt, err := db.DB.Prepare(fmt.Sprintf("SELECT DB_NAME(%d) AS [Name];", id))
+	sqlStmt := "select dbs.[name] FROM sys.database_recovery_status drs JOIN sys.databases dbs ON drs.database_id = dbs.database_id where drs.recovery_fork_guid = '%s'"
+
+	stmt, err := db.DB.Prepare(fmt.Sprintf(sqlStmt, id))
 	if err != nil {
 		return nil, err
 	}
 	defer stmt.Close()
 
 	row := stmt.QueryRow()
-	var name *string
+	var name string
 	err = row.Scan(&name)
 	if err != nil {
 		return nil, err
 	}
-	return name, nil
+	return &name, nil
 }
 
-func (db *MSSql) DeleteDatabase(ctx context.Context, spec *actionsv1alpha1.Database) error {
+func (db *MSSql) DeleteDatabase(ctx context.Context, databaseName string) error {
 	_ = log.FromContext(ctx)
 	logger := log.Log
 
-	logger.Info("deleting the database", "name", spec.Spec.Name)
+	logger.Info("deleting the database", "name", databaseName)
 	// Build connection string
 	connString := fmt.Sprintf("server=%s;user id=%s;password=%s;port=%d", db.Server, db.User, db.Password, db.Port)
 
@@ -123,7 +129,7 @@ func (db *MSSql) DeleteDatabase(ctx context.Context, spec *actionsv1alpha1.Datab
 		return err
 	}
 	var dbID int64
-	result, err := db.DB.Query(fmt.Sprintf("SELECT DB_ID(N'%s') AS [ID];", spec.Spec.Name))
+	result, err := db.DB.Query(fmt.Sprintf("SELECT DB_ID(N'%s') AS [ID];", databaseName))
 	if err != nil {
 		return err
 	}
@@ -131,7 +137,7 @@ func (db *MSSql) DeleteDatabase(ctx context.Context, spec *actionsv1alpha1.Datab
 	result.Next()
 
 	if err = result.Scan(&dbID); err == nil {
-		rows, err := db.DB.Query(fmt.Sprintf("DROP DATABASE %s;", spec.Spec.Name))
+		rows, err := db.DB.Query(fmt.Sprintf("DROP DATABASE %s;", databaseName))
 		if err != nil {
 			return err
 		}
@@ -143,11 +149,11 @@ func (db *MSSql) DeleteDatabase(ctx context.Context, spec *actionsv1alpha1.Datab
 	return nil
 }
 
-func (db *MSSql) CreateDatabase(ctx context.Context, spec *actionsv1alpha1.Database) (*string, error) {
+func (db *MSSql) CreateDatabase(ctx context.Context, databaseName string, params *DatabaseParams) (*string, error) {
 	_ = log.FromContext(ctx)
 	logger := log.Log
 
-	logger.Info("creating the database", "name", spec.Spec.Name)
+	logger.Info("creating the database", "name", databaseName)
 	// Build connection string
 	connString := fmt.Sprintf("server=%s;user id=%s;password=%s;port=%d", db.Server, db.User, db.Password, db.Port)
 
@@ -163,18 +169,18 @@ func (db *MSSql) CreateDatabase(ctx context.Context, spec *actionsv1alpha1.Datab
 	if err != nil {
 		return nil, err
 	}
-	_, err = db.DB.Exec(buildDatabaseSQL("CREATE", spec))
+	_, err = db.DB.Exec(buildDatabaseSQL("CREATE", databaseName, params))
 	if err != nil {
 		return nil, err
 	}
-	return db.FindDatabaseID(ctx, spec)
+	return db.FindDatabaseID(ctx, databaseName)
 }
 
-func (db *MSSql) AlterDatabase(ctx context.Context, spec *actionsv1alpha1.Database) error {
+func (db *MSSql) AlterDatabase(ctx context.Context, databaseName string, params *DatabaseParams) error {
 	_ = log.FromContext(ctx)
 	logger := log.Log
 
-	logger.Info("altering the database", "name", spec.Spec.Name)
+	logger.Info("altering the database", "name", databaseName)
 	// Build connection string
 	connString := fmt.Sprintf("server=%s;user id=%s;password=%s;port=%d", db.Server, db.User, db.Password, db.Port)
 
@@ -191,27 +197,27 @@ func (db *MSSql) AlterDatabase(ctx context.Context, spec *actionsv1alpha1.Databa
 		return err
 	}
 
-	sql := buildDatabaseSQL("ALTER", spec)
+	sql := buildDatabaseSQL("ALTER", databaseName, params)
 	if len(sql) > 0 {
 		_, err = db.DB.Exec(sql)
 		if err != nil {
 			return err
 		}
 	} else {
-		logger.Info("nothing to change, not altering database", "name", spec.Spec.Name)
+		logger.Info("nothing to change, not altering database", "name", databaseName)
 	}
 
 	return nil
 }
 
-func buildDatabaseSQL(verb string, spec *actionsv1alpha1.Database) string {
+func buildDatabaseSQL(verb string, databaseName string, params *DatabaseParams) string {
 	var b strings.Builder
 	var count int8 = 0
 
-	fmt.Fprintf(&b, "%s DATABASE %s ", verb, spec.Spec.Name)
+	fmt.Fprintf(&b, "%s DATABASE %s ", verb, databaseName)
 
-	if spec.Spec.CollationName != "" {
-		fmt.Fprintf(&b, "Collate %s", spec.Spec.CollationName)
+	if params.CollationName != "" {
+		fmt.Fprintf(&b, "Collate %s", params.CollationName)
 		count++
 	}
 	if verb == "ALTER" && count == 0 {
