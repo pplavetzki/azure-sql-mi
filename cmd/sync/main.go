@@ -89,7 +89,7 @@ func performSync(msSQL *ms.MSSql, databaseID, databaseName string) {
 		// 	logger.Info("successfully created a new database, but no database-id")
 		// }
 	} else if databaseID == "" && dbIDR.Result != nil {
-		panic(fmt.Errorf("out of sync -- database name: %s, database guid: %s found, exists on server but not managed be controller", databaseName, databaseID))
+		panic(fmt.Errorf("out of sync -- database name: %s, database guid: %s found, exists on server but not managed by the controller", databaseName, *dbIDR.Result))
 	} else if databaseID != "" && (dbIDR.Result != nil && *dbIDR.Result != databaseID) {
 		panic(fmt.Errorf("out of sync -- database guid: %s does not match what controller database guid is expecting: %s", *dbIDR.Result, databaseID))
 	}
