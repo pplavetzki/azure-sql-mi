@@ -34,6 +34,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 
+	"github.com/go-logr/logr"
 	actionsv1alpha1 "github.com/pplavetzki/azure-sql-mi/api/v1alpha1"
 	ms "github.com/pplavetzki/azure-sql-mi/internal"
 	batch "k8s.io/api/batch/v1"
@@ -46,10 +47,11 @@ const databaseFinalizer = "actions.msft.isd.coe.io/finalizer"
 type DatabaseReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
+	Logger logr.Logger
 }
 
 type AnnotationPatch struct {
-	Logger     *log.DelegatingLogger
+	Logger     logr.Logger
 	DatabaseID string
 }
 
@@ -90,7 +92,8 @@ func (r *DatabaseReconciler) updateDatabaseStatus(db *actionsv1alpha1.Database, 
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.9.2/pkg/reconcile
 func (r *DatabaseReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	_ = log.FromContext(ctx)
-	logger := log.Log
+	logger := r.Logger
+	logger.Info("reconciling database")
 
 	db := &actionsv1alpha1.Database{}
 	err := r.Get(ctx, req.NamespacedName, db)
@@ -114,7 +117,7 @@ func (r *DatabaseReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	if err != nil {
 		return ctrl.Result{}, err
 	}
-	logger.V(1).Info("successfully found the managed instance", "managed-instance-name", mi.Metadata.Name)
+	logger.V(1).Info("successfully found managed instance", "sql-managed-instance", db.Spec.SQLManagedInstance)
 	if mi.Status.State != "Ready" {
 		meta.SetStatusCondition(&db.Status.Conditions, *db.ErroredCondition())
 		r.updateDatabaseStatus(db, "Error")
@@ -133,7 +136,8 @@ func (r *DatabaseReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	/******************************************************************************************************************/
 
 	// This is the creating a MSSql Server `Provider`
-	msSQL := ms.NewMSSql(db.Spec.Server, string(username), string(password), db.Spec.Port)
+	// db.Spec.Server
+	msSQL := ms.NewMSSql("localhost", string(username), string(password), db.Spec.Port)
 
 	// Let's look at the status here first
 

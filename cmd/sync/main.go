@@ -6,12 +6,13 @@ import (
 	"os"
 	"strconv"
 
+	"github.com/go-logr/logr"
 	ms "github.com/pplavetzki/azure-sql-mi/internal"
 )
 
-// var (
-// 	logger logr.Logger
-// )
+var (
+	logger logr.Logger
+)
 
 type DBResult struct {
 	Result *string

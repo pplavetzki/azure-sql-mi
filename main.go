@@ -81,15 +81,20 @@ func main() {
 	if err = (&controllers.DatabaseReconciler{
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),
+		Logger: ctrl.Log.WithName("controllers").WithName("database"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Database")
 		os.Exit(1)
 	}
 
+	/*******************************************************************************************************************
+	// we need to uncomment this to trigger the webhook!!!
+	*******************************************************************************************************************/
 	// if err = (&actionsv1alpha1.Database{}).SetupWebhookWithManager(mgr); err != nil {
 	// 	setupLog.Error(err, "unable to create webhook", "webhook", "Database")
 	// 	os.Exit(1)
 	// }
+	/******************************************************************************************************************/
 	//+kubebuilder:scaffold:builder
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
