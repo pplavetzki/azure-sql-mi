@@ -165,12 +165,16 @@ spec:
                   - type
                   type: object
                 type: array
+              databaseID.omitempty:
+                description: DatabaseID guid of the database
+                type: string
               status:
                 description: 'INSERT ADDITIONAL STATUS FIELD - define observed state
                   of cluster Important: Run "make" to regenerate code after modifying
                   this file'
                 type: string
             required:
+            - databaseID.omitempty
             - status
             type: object
         type: object

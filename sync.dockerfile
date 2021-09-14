@@ -6,6 +6,7 @@ COPY go.* ./
 RUN go mod download
 
 COPY cmd/sync/*.go ./
+COPY internal/ internal/
 
 RUN go build -o /sync-db
 

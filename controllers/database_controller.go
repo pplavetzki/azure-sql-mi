@@ -314,7 +314,7 @@ func (r *DatabaseReconciler) createSyncJob(db *actionsv1alpha1.Database, mi *ms.
 					Containers: []corev1.Container{
 						{
 							Name:  "sync",
-							Image: "paulplavetzki/sync:v0.0.2",
+							Image: "paulplavetzki/sync:v0.0.3",
 							// EnvFrom: []corev1.EnvFromSource{
 							// 	corev1.EnvFromSource{
 							// 		SecretRef: &corev1.SecretEnvSource{
@@ -352,6 +352,13 @@ func (r *DatabaseReconciler) createSyncJob(db *actionsv1alpha1.Database, mi *ms.
 				},
 			},
 		},
+	}
+	if db.Status.DatabaseID != "" {
+		dbEnv := corev1.EnvVar{
+			Name:  "DB_ID",
+			Value: db.Status.DatabaseID,
+		}
+		job.Spec.Template.Spec.Containers[0].Env = append(job.Spec.Template.Spec.Containers[0].Env, dbEnv)
 	}
 	// for k, v := range cronJob.Spec.JobTemplate.Annotations {
 	// 	job.Annotations[k] = v
