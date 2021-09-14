@@ -211,8 +211,13 @@ func (r *DatabaseReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 				status = "Errored"
 				condition = *db.ErroredCondition()
 			case batch.JobComplete:
-				status = "Created"
+				status = "Synced"
 				condition = *db.CreatedCondition()
+				loggies, err := ms.QueryJobPod(ctx, db.Namespace, job.Name)
+				if err != nil {
+					logger.Error(err, "failed to get logs from job", "job", job.Name)
+				}
+				logger.V(1).Info(*loggies)
 			}
 		}
 	}

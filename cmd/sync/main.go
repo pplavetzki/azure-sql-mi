@@ -7,7 +7,9 @@ import (
 	"strconv"
 
 	"github.com/go-logr/logr"
+	"github.com/go-logr/zapr"
 	ms "github.com/pplavetzki/azure-sql-mi/internal"
+	"go.uber.org/zap"
 )
 
 var (
@@ -72,23 +74,23 @@ func performSync(msSQL *ms.MSSql, databaseID, databaseName string) {
 	if dbIDR.Error != nil {
 		panic(fmt.Errorf("failed to query db id: %v", dbIDR.Error))
 	}
-	// if dbIDR.Result != nil {
-	// 	logger.V(1).Info("found database ID", "database-id", *dbIDR.Result)
-	// }
-	// if dbNameR.Result != nil {
-	// 	logger.V(1).Info("database name", "database-name", *dbNameR.Result)
-	// }
+	if dbIDR.Result != nil {
+		logger.V(1).Info("found database ID", "database-id", *dbIDR.Result)
+	}
+	if dbNameR.Result != nil {
+		logger.V(1).Info("database name", "database-name", *dbNameR.Result)
+	}
 	// Need to do some serious logic here
 	if databaseID == "" && dbIDR.Result == nil {
-		_, err := msSQL.CreateDatabase(context.TODO(), databaseName, &ms.DatabaseParams{})
+		dbID, err := msSQL.CreateDatabase(context.TODO(), databaseName, &ms.DatabaseParams{})
 		if err != nil {
 			panic(err)
 		}
-		// if dbID != nil {
-		// 	logger.Info("successfully created a new database", "database-id", *dbID)
-		// } else {
-		// 	logger.Info("successfully created a new database, but no database-id")
-		// }
+		if dbID != nil {
+			logger.Info("successfully created a new database", "database-id", *dbID)
+		} else {
+			logger.Info("successfully created a new database, but no database-id")
+		}
 	} else if databaseID == "" && dbIDR.Result != nil {
 		panic(fmt.Errorf("out of sync -- database name: %s, database guid: %s found, exists on server but not managed by the controller", databaseName, *dbIDR.Result))
 	} else if databaseID != "" && (dbIDR.Result != nil && *dbIDR.Result != databaseID) {
@@ -105,11 +107,11 @@ func performSync(msSQL *ms.MSSql, databaseID, databaseName string) {
 }
 
 func main() {
-	// zapLog, err := zap.NewDevelopment()
-	// if err != nil {
-	// 	panic(fmt.Sprintf("failed starting logger (%v)?", err))
-	// }
-	// logger = zapr.NewLogger(zapLog)
+	zapLog, err := zap.NewDevelopment()
+	if err != nil {
+		panic(fmt.Sprintf("failed starting logger (%v)?", err))
+	}
+	logger = zapr.NewLogger(zapLog)
 
 	server := getEnvOrFail("MS_SERVER")
 	user := getEnvOrFail("DB_USER")

@@ -65,7 +65,11 @@ func (db *MSSql) FindDatabaseID(ctx context.Context, databaseName string) (*stri
 	row := stmt.QueryRow()
 	var id string
 	err = row.Scan(&id)
+	// sql: no rows in result set
 	if err != nil {
+		if strings.Contains(err.Error(), "sql: no rows in result set") {
+			return nil, nil
+		}
 		return nil, err
 	}
 
@@ -102,7 +106,7 @@ func (db *MSSql) FindDatabaseName(ctx context.Context, id string) (*string, erro
 	row := stmt.QueryRow()
 	var name string
 	err = row.Scan(&name)
-	if err != nil {
+	if err != nil && !strings.Contains(err.Error(), "zero") {
 		return nil, err
 	}
 	return &name, nil
