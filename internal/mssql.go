@@ -3,7 +3,9 @@ package internal
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 
 	_ "github.com/denisenkom/go-mssqldb"
@@ -32,6 +34,148 @@ func NewMSSql(server, user, password string, port int) *MSSql {
 		User:     user,
 		Password: password,
 	}
+}
+
+type DatabaseSync struct {
+	Database []struct {
+		Name                       string `json:"name"`
+		State                      int    `json:"state"`
+		IsReadOnly                 bool   `json:"isReadOnly"`
+		UserAccess                 int    `json:"userAccess"`
+		CreateDate                 string `json:"createDate"`
+		CompatibilityLevel         int    `json:"compatibilityLevel"`
+		Collation                  string `json:"collation"`
+		AllowSnapshotIsolation     string `json:"allowSnapshotIsolation"`
+		AllowReadCommittedSnapshot string `json:"allowReadCommittedSnapshot"`
+		Parameterization           string `json:"parameterization"`
+	} `json:"database"`
+}
+
+type DatabaseConfig struct {
+	DatabaseName               string
+	DatabaseID                 string
+	State                      int
+	IsReadOnly                 bool
+	UserAccess                 int
+	CompatibilityLevel         int
+	Collation                  string
+	AllowSnapshotIsolation     bool
+	AllowReadCommittedSnapshot bool
+	Parameterization           string
+}
+
+type SyncResponse struct {
+	CompatibilityLevel         *int
+	AllowSnapshotIsolation     *bool
+	Parameterization           *string
+	AllowReadCommittedSnapshot *bool
+}
+
+func Safe(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
+}
+
+func (db *MSSql) SyncNeeded(ctx context.Context, params DatabaseConfig) (*SyncResponse, error) {
+	_ = log.FromContext(ctx)
+	logger := log.Log
+
+	logger.V(1).Info("determine syncing", "sync-params", params)
+
+	syncResponse := &SyncResponse{}
+
+	// Build connection string
+	connString := fmt.Sprintf("server=%s;user id=%s;password=%s;port=%d", db.Server, db.User, db.Password, db.Port)
+
+	var err error
+
+	if params.DatabaseID != "" {
+		dn, err := db.FindDatabaseName(ctx, params.DatabaseID)
+		if err != nil {
+			return nil, err
+		}
+		if Safe(dn) != params.DatabaseName {
+			return nil, fmt.Errorf("database name: %s does not match the name does not match the expected name %s", Safe(dn), params.DatabaseName)
+		}
+	}
+
+	// Create connection pool
+	db.DB, err = sql.Open("sqlserver", connString)
+	if err != nil {
+		return nil, err
+	}
+	err = db.DB.Ping()
+	if err != nil {
+		return nil, err
+	}
+	sqlStmt := `SELECT [name],
+			[state], -- needs to be 0 to run action
+			[is_read_only] as [isReadOnly], -- needs to be 0 to run action
+			[user_access] as [userAccess], -- needs to be 0 to run action
+			[create_date] as [createDate], -- may want for status
+			[compatibility_level] as [compatibilityLevel],
+			[collation_name] as [collation],
+			IIF(snapshot_isolation_state = 1 or snapshot_isolation_state = 3, 'true', 'false') as [allowSnapshotIsolation],
+			IIF(is_read_committed_snapshot_on = 1, 'true', 'false') as [allowReadCommittedSnapshot],
+			IIF(is_parameterization_forced = 0, 'simple', 'forced' ) as [parameterization]
+		FROM sys.databases
+		WHERE [name] = '%s'
+		FOR JSON PATH, ROOT ('database')
+	`
+
+	stmt, err := db.DB.Prepare(fmt.Sprintf(sqlStmt, params.DatabaseName))
+	if err != nil {
+		return nil, err
+	}
+	defer stmt.Close()
+
+	row := stmt.QueryRow()
+	var output string
+	err = row.Scan(&output)
+	// sql: no rows in result set
+	if err != nil {
+		if strings.Contains(err.Error(), "sql: no rows in result set") {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var sync DatabaseSync
+	err = json.Unmarshal([]byte(output), &sync)
+	if err != nil {
+		return nil, err
+	}
+
+	/***************************************************************************************************************************
+	* Perform the validation for syncing logic
+	***************************************************************************************************************************/
+	allowReadCommittedSnapshot, _ := strconv.ParseBool(sync.Database[0].AllowReadCommittedSnapshot)
+	allowSnapshotIsolation, _ := strconv.ParseBool(sync.Database[0].AllowSnapshotIsolation)
+	requireSync := false
+
+	if params.AllowReadCommittedSnapshot != allowReadCommittedSnapshot {
+		syncResponse.AllowReadCommittedSnapshot = &allowReadCommittedSnapshot
+		requireSync = true
+	}
+	if params.AllowSnapshotIsolation != allowSnapshotIsolation {
+		syncResponse.AllowSnapshotIsolation = &allowSnapshotIsolation
+		requireSync = true
+	}
+	if params.CompatibilityLevel != sync.Database[0].CompatibilityLevel {
+		syncResponse.CompatibilityLevel = &sync.Database[0].CompatibilityLevel
+		requireSync = true
+	}
+	if params.Parameterization != sync.Database[0].Parameterization {
+		syncResponse.Parameterization = &sync.Database[0].Parameterization
+		requireSync = true
+	}
+	/**************************************************************************************************************************/
+	if requireSync {
+		return syncResponse, nil
+	}
+
+	return nil, nil
 }
 
 // FindDatabaseID finds the db id
@@ -106,7 +250,10 @@ func (db *MSSql) FindDatabaseName(ctx context.Context, id string) (*string, erro
 	row := stmt.QueryRow()
 	var name string
 	err = row.Scan(&name)
-	if err != nil && !strings.Contains(err.Error(), "zero") {
+	if err != nil {
+		if strings.Contains(err.Error(), "sql: no rows in result set") {
+			return nil, nil
+		}
 		return nil, err
 	}
 	return &name, nil

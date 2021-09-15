@@ -5,6 +5,7 @@ import (
 )
 
 const (
+	DatabaseConditionPending  string = "Pending"
 	DatabaseConditionCreating string = "Creating"
 	DatabaseConditionCreated  string = "Created"
 	DatabaseConditionError    string = "Errored"
@@ -13,12 +14,18 @@ const (
 )
 
 const (
+	DatabaseConditionReasonPending  string = "PendingDatabase"
 	DatabaseConditionReasonCreating string = "CreatingDatabase"
 	DatabaseConditionReasonCreated  string = "CreatedDatabase"
 	DatabaseConditionReasonError    string = "ErroredDatabase"
 	DatabaseConditionReasonUpdating string = "UpdatingDatabase"
 	DatabaseConditionReasonUpdated  string = "UpdatedDatabase"
 )
+
+func (d *Database) PendingCondition() *metav1.Condition {
+	return &metav1.Condition{Type: DatabaseConditionPending, Status: metav1.ConditionTrue,
+		Reason: DatabaseConditionReasonPending, Message: "Database is pending"}
+}
 
 func (d *Database) CreatingCondition() *metav1.Condition {
 	return &metav1.Condition{Type: DatabaseConditionCreating, Status: metav1.ConditionTrue,

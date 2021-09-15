@@ -58,14 +58,14 @@ type DatabaseStatus struct {
 	// Important: Run "make" to regenerate code after modifying this file
 	Status string `json:"status"`
 	// DatabaseID guid of the database
-	DatabaseID string `json:"databaseID.omitempty"`
+	DatabaseID string `json:"databaseID,omitempty"`
 	// Conditions the array of conditions of the object
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }
 
 //+kubebuilder:object:root=true
 //+kubebuilder:subresource:status
-//+kubebuilder:printcolumn:name="Database ID",type="string",JSONPath=`.metadata.annotations.mssql/db_id`,description="MSSql Database ID"
+//+kubebuilder:printcolumn:name="Database ID",type="string",JSONPath=`.status.databaseID`,description="MSSql Database ID"
 //+kubebuilder:printcolumn:name="Database Name",type=string,JSONPath=`.spec.name`,description="Name of Database"
 //+kubebuilder:printcolumn:name="Database Status",type=string,JSONPath=`.status.status`,description="Status of Database"
 //+kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"

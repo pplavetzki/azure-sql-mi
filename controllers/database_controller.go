@@ -20,7 +20,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strings"
 	"time"
 
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -42,6 +41,10 @@ import (
 )
 
 const databaseFinalizer = "actions.msft.isd.coe.io/finalizer"
+
+var (
+	scheduledTimeAnnotation = "batch.tutorial.kubebuilder.io/scheduled-at"
+)
 
 // DatabaseReconciler reconciles a Database object
 type DatabaseReconciler struct {
@@ -68,8 +71,11 @@ func (a AnnotationPatch) Data(obj client.Object) ([]byte, error) {
 	return json.Marshal(obj)
 }
 
-func (r *DatabaseReconciler) updateDatabaseStatus(db *actionsv1alpha1.Database, status string) error {
+func (r *DatabaseReconciler) updateDatabaseStatus(db *actionsv1alpha1.Database, status, databaseID string) error {
 	db.Status.Status = status
+	if databaseID != "" {
+		db.Status.DatabaseID = databaseID
+	}
 	return r.Status().Update(context.TODO(), db)
 }
 
@@ -120,7 +126,7 @@ func (r *DatabaseReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	logger.V(1).Info("successfully found managed instance", "sql-managed-instance", db.Spec.SQLManagedInstance)
 	if mi.Status.State != "Ready" {
 		meta.SetStatusCondition(&db.Status.Conditions, *db.ErroredCondition())
-		r.updateDatabaseStatus(db, "Error")
+		r.updateDatabaseStatus(db, "Error", "")
 		return ctrl.Result{}, fmt.Errorf("the sql managed instance is not in a `Ready` state, current status is: %v", mi.Status)
 	}
 	sec := &corev1.Secret{}
@@ -137,8 +143,8 @@ func (r *DatabaseReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 
 	// This is the creating a MSSql Server `Provider`
 	// db.Spec.Server
-	msSQL := ms.NewMSSql("localhost", string(username), string(password), db.Spec.Port)
-
+	msSQL := ms.NewMSSql(fmt.Sprintf("%s-p-svc", db.Spec.SQLManagedInstance), string(username), string(password), db.Spec.Port)
+	// msSQL := ms.NewMSSql(db.Spec.Server, string(username), string(password), db.Spec.Port)
 	// Let's look at the status here first
 
 	/*******************************************************************************************************************
@@ -183,13 +189,46 @@ func (r *DatabaseReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	}
 
 	var childJobs batch.JobList
-	var status string
-	var condition metav1.Condition
+	status := "Pending"
+	condition := *db.PendingCondition()
+	var databaseId *string
+
+	var activeJobs []*batch.Job
+	var successfulJobs []*batch.Job
+	var failedJobs []*batch.Job
 
 	if err := r.List(ctx, &childJobs, client.InNamespace(req.Namespace), client.MatchingFields{jobOwnerKey: req.Name}); err != nil {
 		logger.Error(err, "unable to list child Jobs")
 		return ctrl.Result{}, err
 	}
+
+	for i, job := range childJobs.Items {
+		_, finishedType := isJobFinished(&job)
+		switch finishedType {
+		case "": // ongoing
+			status = "Syncing"
+			condition = *db.CreatingCondition()
+			activeJobs = append(activeJobs, &childJobs.Items[i])
+		case batch.JobFailed:
+			status = "Errored"
+			condition = *db.ErroredCondition()
+			failedJobs = append(failedJobs, &childJobs.Items[i])
+		case batch.JobComplete:
+			status = "Synced"
+			condition = *db.CreatedCondition()
+			if db.Status.DatabaseID == "" {
+				databaseId, err = ms.QueryJobPod(ctx, db.Namespace, job.Name)
+			}
+			if err != nil {
+				logger.Error(err, "failed to get logs from job", "job", job.Name)
+			}
+			successfulJobs = append(successfulJobs, &childJobs.Items[i])
+		}
+	}
+
+	meta.SetStatusCondition(&db.Status.Conditions, condition)
+	r.updateDatabaseStatus(db, status, SafeString(databaseId))
+
 	if len(childJobs.Items) == 0 {
 		job, err := r.createSyncJob(db, mi, msSQL)
 		if err != nil {
@@ -200,30 +239,7 @@ func (r *DatabaseReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 			logger.Error(err, "unable to create Job for Sync", "job", job)
 			return ctrl.Result{}, err
 		}
-	} else {
-		for _, job := range childJobs.Items {
-			_, finishedType := isJobFinished(&job)
-			switch finishedType {
-			case "": // ongoing
-				status = "Pending"
-				condition = *db.CreatingCondition()
-			case batch.JobFailed:
-				status = "Errored"
-				condition = *db.ErroredCondition()
-			case batch.JobComplete:
-				status = "Synced"
-				condition = *db.CreatedCondition()
-				loggies, err := ms.QueryJobPod(ctx, db.Namespace, job.Name)
-				if err != nil {
-					logger.Error(err, "failed to get logs from job", "job", job.Name)
-				}
-				logger.V(1).Info(*loggies)
-			}
-		}
 	}
-
-	meta.SetStatusCondition(&db.Status.Conditions, condition)
-	r.updateDatabaseStatus(db, status)
 	/******************************************************************************************************************/
 
 	// var dbName *string
@@ -283,6 +299,27 @@ func (r *DatabaseReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	return ctrl.Result{}, nil
 }
 
+func SafeString(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
+}
+
+func SafeInt(i *int) int {
+	if i == nil {
+		return 0
+	}
+	return *i
+}
+
+func SafeBool(b *bool) bool {
+	if b == nil {
+		return false
+	}
+	return *b
+}
+
 func (r *DatabaseReconciler) finalizeDatabase(ctx context.Context, db *actionsv1alpha1.Database, mssql *ms.MSSql) error {
 	if err := mssql.DeleteDatabase(ctx, db.Spec.Name); err != nil {
 		return err
@@ -299,7 +336,6 @@ func (r *DatabaseReconciler) createSyncJob(db *actionsv1alpha1.Database, mi *ms.
 	// We want job names for a given nominal start time to have a deterministic name to avoid the same job being created twice
 	sched := time.Now()
 	name := fmt.Sprintf("%s-%d", db.Name, sched.Unix())
-	endpointInfo := strings.Split(mi.Status.PrimaryEndpoint, ",")
 
 	job := &batch.Job{
 		ObjectMeta: metav1.ObjectMeta{
@@ -339,11 +375,11 @@ func (r *DatabaseReconciler) createSyncJob(db *actionsv1alpha1.Database, mi *ms.
 								},
 								{
 									Name:  "DB_PORT",
-									Value: endpointInfo[1],
+									Value: fmt.Sprintf("%d", msSQL.Port),
 								},
 								{
 									Name:  "MS_SERVER",
-									Value: endpointInfo[0],
+									Value: msSQL.Server,
 								},
 							},
 						},

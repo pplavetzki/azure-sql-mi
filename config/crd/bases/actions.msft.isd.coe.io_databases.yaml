@@ -18,7 +18,7 @@ spec:
   versions:
   - additionalPrinterColumns:
     - description: MSSql Database ID
-      jsonPath: .metadata.annotations.mssql/db_id
+      jsonPath: .status.databaseID
       name: Database ID
       type: string
     - description: Name of Database
@@ -165,7 +165,7 @@ spec:
                   - type
                   type: object
                 type: array
-              databaseID.omitempty:
+              databaseID:
                 description: DatabaseID guid of the database
                 type: string
               status:
@@ -174,7 +174,6 @@ spec:
                   this file'
                 type: string
             required:
-            - databaseID.omitempty
             - status
             type: object
         type: object
