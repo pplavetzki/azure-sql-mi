@@ -249,11 +249,11 @@ func (r *DatabaseReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 			return ctrl.Result{}, err
 		}
 		if syncResponse != nil {
-			err = msSQL.AlterDatabase(ctx, db.Spec.Name, &ms.DatabaseParams{
-				AllowSnapshotIsolation:     SafeBool(syncResponse.AllowSnapshotIsolation),
-				AllowReadCommittedSnapshot: SafeBool(syncResponse.AllowReadCommittedSnapshot),
-				Parameterization:           SafeString(syncResponse.Parameterization),
-				CompatibilityLevel:         SafeInt(syncResponse.CompatibilityLevel)})
+			err = msSQL.AlterDatabase(ctx, db.Spec.Name, &ms.AlterParams{
+				AllowSnapshotIsolation:     syncResponse.AllowSnapshotIsolation,
+				AllowReadCommittedSnapshot: syncResponse.AllowReadCommittedSnapshot,
+				Parameterization:           syncResponse.Parameterization,
+				CompatibilityLevel:         syncResponse.CompatibilityLevel})
 			if err != nil {
 				return ctrl.Result{}, err
 			}

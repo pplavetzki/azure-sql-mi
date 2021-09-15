@@ -30,6 +30,13 @@ type DatabaseParams struct {
 	CompatibilityLevel         int
 }
 
+type AlterParams struct {
+	AllowSnapshotIsolation     *bool
+	AllowReadCommittedSnapshot *bool
+	Parameterization           *string
+	CompatibilityLevel         *int
+}
+
 // NewMSSql contructor pattern
 func NewMSSql(server, user, password string, port int) *MSSql {
 	return &MSSql{
@@ -125,10 +132,10 @@ func (db *MSSql) SyncNeeded(ctx context.Context, params *DatabaseConfig) (*SyncR
 		"IIF(is_read_committed_snapshot_on = 1, 'true', 'false') as [allowReadCommittedSnapshot], " +
 		"IIF(is_parameterization_forced = 0, 'simple', 'forced' ) as [parameterization] " +
 		"FROM sys.databases " +
-		"WHERE [name] = 'MyDatabase1' " +
+		"WHERE [name] = '%s' " +
 		"FOR JSON PATH, ROOT ('database')"
 
-	stmt, err := db.DB.Prepare(sqlStmt)
+	stmt, err := db.DB.Prepare(fmt.Sprintf(sqlStmt, params.DatabaseName))
 	if err != nil {
 		return nil, err
 	}
@@ -153,24 +160,24 @@ func (db *MSSql) SyncNeeded(ctx context.Context, params *DatabaseConfig) (*SyncR
 	/***************************************************************************************************************************
 	* Perform the validation for syncing logic
 	***************************************************************************************************************************/
-	allowReadCommittedSnapshot, _ := strconv.ParseBool(sync.Database[0].AllowReadCommittedSnapshot)
+	// allowReadCommittedSnapshot, _ := strconv.ParseBool(sync.Database[0].AllowReadCommittedSnapshot)
 	allowSnapshotIsolation, _ := strconv.ParseBool(sync.Database[0].AllowSnapshotIsolation)
 	requireSync := false
 
-	if params.AllowReadCommittedSnapshot != allowReadCommittedSnapshot {
-		syncResponse.AllowReadCommittedSnapshot = &allowReadCommittedSnapshot
-		requireSync = true
-	}
+	// if params.AllowReadCommittedSnapshot != allowReadCommittedSnapshot {
+	// 	syncResponse.AllowReadCommittedSnapshot = &params.AllowReadCommittedSnapshot
+	// 	requireSync = true
+	// }
 	if params.AllowSnapshotIsolation != allowSnapshotIsolation {
-		syncResponse.AllowSnapshotIsolation = &allowSnapshotIsolation
+		syncResponse.AllowSnapshotIsolation = &params.AllowSnapshotIsolation
 		requireSync = true
 	}
 	if params.CompatibilityLevel != sync.Database[0].CompatibilityLevel {
-		syncResponse.CompatibilityLevel = &sync.Database[0].CompatibilityLevel
+		syncResponse.CompatibilityLevel = &params.CompatibilityLevel
 		requireSync = true
 	}
 	if params.Parameterization != sync.Database[0].Parameterization {
-		syncResponse.Parameterization = &sync.Database[0].Parameterization
+		syncResponse.Parameterization = &params.Parameterization
 		requireSync = true
 	}
 	/**************************************************************************************************************************/
@@ -330,7 +337,7 @@ func (db *MSSql) CreateDatabase(ctx context.Context, databaseName string, params
 	return db.FindDatabaseID(ctx, databaseName)
 }
 
-func (db *MSSql) AlterDatabase(ctx context.Context, databaseName string, params *DatabaseParams) error {
+func (db *MSSql) AlterDatabase(ctx context.Context, databaseName string, params *AlterParams) error {
 	_ = log.FromContext(ctx)
 	logger := log.Log
 
@@ -351,17 +358,49 @@ func (db *MSSql) AlterDatabase(ctx context.Context, databaseName string, params 
 		return err
 	}
 
-	sql := buildDatabaseSQL("ALTER", databaseName, params)
-	if len(sql) > 0 {
-		_, err = db.DB.Exec(sql)
-		if err != nil {
-			return err
+	altStatements := buildAlterSQL(databaseName, params)
+	errors := []error{}
+	if len(altStatements) > 0 {
+		for _, alter := range altStatements {
+			_, err = db.DB.Exec(alter)
+			if err != nil {
+				logger.V(0).Info(err.Error())
+				errors = append(errors, err)
+			}
 		}
-	} else {
-		logger.Info("nothing to change, not altering database", "name", databaseName)
+	}
+	if len(errors) > 0 {
+		return fmt.Errorf("errors while running alter on database: %s", databaseName)
 	}
 
 	return nil
+}
+
+func onOff(value bool) string {
+	if value {
+		return "ON"
+	} else {
+		return "OFF"
+	}
+}
+
+func buildAlterSQL(databaseName string, params *AlterParams) []string {
+	altStatements := []string{}
+	altTemplate := fmt.Sprintf("Alter DATABASE %s ", databaseName)
+
+	if params.Parameterization != nil && *params.Parameterization != "" {
+		altStatements = append(altStatements, fmt.Sprintf("%s SET PARAMETERIZATION %s;", altTemplate, *params.Parameterization))
+	}
+	// if params.AllowReadCommittedSnapshot != nil {
+	// 	altStatements = append(altStatements, fmt.Sprintf("%s SET READ_COMMITTED_SNAPSHOT %s;", altTemplate, onOff(*params.AllowReadCommittedSnapshot)))
+	// }
+	if params.AllowSnapshotIsolation != nil {
+		altStatements = append(altStatements, fmt.Sprintf("%s SET ALLOW_SNAPSHOT_ISOLATION %s;", altTemplate, onOff(*params.AllowSnapshotIsolation)))
+	}
+	if params.CompatibilityLevel != nil {
+		altStatements = append(altStatements, fmt.Sprintf("%s SET COMPATIBILITY_LEVEL = %d;", altTemplate, *params.CompatibilityLevel))
+	}
+	return altStatements
 }
 
 func buildDatabaseSQL(verb string, databaseName string, params *DatabaseParams) string {
