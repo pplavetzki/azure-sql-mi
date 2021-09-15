@@ -23,7 +23,11 @@ type MSSql struct {
 }
 
 type DatabaseParams struct {
-	CollationName string
+	Collation                  string
+	AllowSnapshotIsolation     bool
+	AllowReadCommittedSnapshot bool
+	Parameterization           string
+	CompatibilityLevel         int
 }
 
 // NewMSSql contructor pattern
@@ -78,7 +82,7 @@ func Safe(s *string) string {
 	return *s
 }
 
-func (db *MSSql) SyncNeeded(ctx context.Context, params DatabaseConfig) (*SyncResponse, error) {
+func (db *MSSql) SyncNeeded(ctx context.Context, params *DatabaseConfig) (*SyncResponse, error) {
 	_ = log.FromContext(ctx)
 	logger := log.Log
 
@@ -110,22 +114,21 @@ func (db *MSSql) SyncNeeded(ctx context.Context, params DatabaseConfig) (*SyncRe
 	if err != nil {
 		return nil, err
 	}
-	sqlStmt := `SELECT [name],
-			[state], -- needs to be 0 to run action
-			[is_read_only] as [isReadOnly], -- needs to be 0 to run action
-			[user_access] as [userAccess], -- needs to be 0 to run action
-			[create_date] as [createDate], -- may want for status
-			[compatibility_level] as [compatibilityLevel],
-			[collation_name] as [collation],
-			IIF(snapshot_isolation_state = 1 or snapshot_isolation_state = 3, 'true', 'false') as [allowSnapshotIsolation],
-			IIF(is_read_committed_snapshot_on = 1, 'true', 'false') as [allowReadCommittedSnapshot],
-			IIF(is_parameterization_forced = 0, 'simple', 'forced' ) as [parameterization]
-		FROM sys.databases
-		WHERE [name] = '%s'
-		FOR JSON PATH, ROOT ('database')
-	`
+	sqlStmt := "SELECT [name], " +
+		"[state], " +
+		"[is_read_only] as [isReadOnly], " +
+		"[user_access] as [userAccess], " +
+		"[create_date] as [createDate], " +
+		"[compatibility_level] as [compatibilityLevel], " +
+		"[collation_name] as [collation], " +
+		"IIF(snapshot_isolation_state = 1 or snapshot_isolation_state = 3, 'true', 'false') as [allowSnapshotIsolation], " +
+		"IIF(is_read_committed_snapshot_on = 1, 'true', 'false') as [allowReadCommittedSnapshot], " +
+		"IIF(is_parameterization_forced = 0, 'simple', 'forced' ) as [parameterization] " +
+		"FROM sys.databases " +
+		"WHERE [name] = 'MyDatabase1' " +
+		"FOR JSON PATH, ROOT ('database')"
 
-	stmt, err := db.DB.Prepare(fmt.Sprintf(sqlStmt, params.DatabaseName))
+	stmt, err := db.DB.Prepare(sqlStmt)
 	if err != nil {
 		return nil, err
 	}
@@ -367,8 +370,8 @@ func buildDatabaseSQL(verb string, databaseName string, params *DatabaseParams) 
 
 	fmt.Fprintf(&b, "%s DATABASE %s ", verb, databaseName)
 
-	if params.CollationName != "" {
-		fmt.Fprintf(&b, "Collate %s", params.CollationName)
+	if params.Collation != "" {
+		fmt.Fprintf(&b, "Collate %s", params.Collation)
 		count++
 	}
 	if verb == "ALTER" && count == 0 {

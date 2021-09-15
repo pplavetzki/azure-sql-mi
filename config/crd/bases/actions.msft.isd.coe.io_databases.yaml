@@ -52,9 +52,16 @@ spec:
           spec:
             description: DatabaseSpec defines the desired state of Database
             properties:
-              collationName:
+              allowReadCommittedSnapshot:
+                type: boolean
+              allowSnapshotIsolation:
+                description: AllowSnapshotIsolation
+                type: boolean
+              collation:
                 description: CollationName
                 type: string
+              compatibilityLevel:
+                type: integer
               credentials:
                 description: CredentialsSecret is the name of the secret to use for
                   the sql server login credentials
@@ -73,6 +80,8 @@ spec:
                 type: object
               name:
                 description: Name is the Database name.
+                type: string
+              parameterization:
                 type: string
               port:
                 description: Port where Sql Server is listening

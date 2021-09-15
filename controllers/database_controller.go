@@ -143,8 +143,8 @@ func (r *DatabaseReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 
 	// This is the creating a MSSql Server `Provider`
 	// db.Spec.Server
-	msSQL := ms.NewMSSql(fmt.Sprintf("%s-p-svc", db.Spec.SQLManagedInstance), string(username), string(password), db.Spec.Port)
-	// msSQL := ms.NewMSSql(db.Spec.Server, string(username), string(password), db.Spec.Port)
+	// msSQL := ms.NewMSSql(fmt.Sprintf("%s-p-svc", db.Spec.SQLManagedInstance), string(username), string(password), db.Spec.Port)
+	msSQL := ms.NewMSSql(db.Spec.Server, string(username), string(password), db.Spec.Port)
 	// Let's look at the status here first
 
 	/*******************************************************************************************************************
@@ -178,68 +178,104 @@ func (r *DatabaseReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	/*******************************************************************************************************************
 	* Let's do sync logic here...
 	/******************************************************************************************************************/
-	isJobFinished := func(job *batch.Job) (bool, batch.JobConditionType) {
-		for _, c := range job.Status.Conditions {
-			if (c.Type == batch.JobComplete || c.Type == batch.JobFailed) && c.Status == corev1.ConditionTrue {
-				return true, c.Type
-			}
-		}
+	// isJobFinished := func(job *batch.Job) (bool, batch.JobConditionType) {
+	// 	for _, c := range job.Status.Conditions {
+	// 		if (c.Type == batch.JobComplete || c.Type == batch.JobFailed) && c.Status == corev1.ConditionTrue {
+	// 			return true, c.Type
+	// 		}
+	// 	}
 
-		return false, ""
-	}
+	// 	return false, ""
+	// }
 
-	var childJobs batch.JobList
+	// var childJobs batch.JobList
 	status := "Pending"
 	condition := *db.PendingCondition()
 	var databaseId *string
 
-	var activeJobs []*batch.Job
-	var successfulJobs []*batch.Job
-	var failedJobs []*batch.Job
+	databaseId = &db.Status.DatabaseID
 
-	if err := r.List(ctx, &childJobs, client.InNamespace(req.Namespace), client.MatchingFields{jobOwnerKey: req.Name}); err != nil {
-		logger.Error(err, "unable to list child Jobs")
-		return ctrl.Result{}, err
-	}
+	// var activeJobs []*batch.Job
+	// var successfulJobs []*batch.Job
+	// var failedJobs []*batch.Job
 
-	for i, job := range childJobs.Items {
-		_, finishedType := isJobFinished(&job)
-		switch finishedType {
-		case "": // ongoing
-			status = "Syncing"
-			condition = *db.CreatingCondition()
-			activeJobs = append(activeJobs, &childJobs.Items[i])
-		case batch.JobFailed:
-			status = "Errored"
-			condition = *db.ErroredCondition()
-			failedJobs = append(failedJobs, &childJobs.Items[i])
-		case batch.JobComplete:
-			status = "Synced"
-			condition = *db.CreatedCondition()
-			if db.Status.DatabaseID == "" {
-				databaseId, err = ms.QueryJobPod(ctx, db.Namespace, job.Name)
-			}
-			if err != nil {
-				logger.Error(err, "failed to get logs from job", "job", job.Name)
-			}
-			successfulJobs = append(successfulJobs, &childJobs.Items[i])
+	// if err := r.List(ctx, &childJobs, client.InNamespace(req.Namespace), client.MatchingFields{jobOwnerKey: req.Name}); err != nil {
+	// 	logger.Error(err, "unable to list child Jobs")
+	// 	return ctrl.Result{}, err
+	// }
+
+	// for i, job := range childJobs.Items {
+	// 	_, finishedType := isJobFinished(&job)
+	// 	switch finishedType {
+	// 	case "": // ongoing
+	// 		status = "Syncing"
+	// 		condition = *db.CreatingCondition()
+	// 		activeJobs = append(activeJobs, &childJobs.Items[i])
+	// 	case batch.JobFailed:
+	// 		status = "Errored"
+	// 		condition = *db.ErroredCondition()
+	// 		failedJobs = append(failedJobs, &childJobs.Items[i])
+	// 	case batch.JobComplete:
+	// 		status = "Synced"
+	// 		condition = *db.CreatedCondition()
+	// 		if db.Status.DatabaseID == "" {
+	// 			databaseId, err = ms.QueryJobPod(ctx, db.Namespace, job.Name)
+	// 		}
+	// 		if err != nil {
+	// 			logger.Error(err, "failed to get logs from job", "job", job.Name)
+	// 		}
+	// 		successfulJobs = append(successfulJobs, &childJobs.Items[i])
+	// 	}
+	// }
+
+	if db.Status.DatabaseID == "" {
+		databaseId, err = msSQL.CreateDatabase(ctx, db.Spec.Name, &ms.DatabaseParams{Collation: db.Spec.Collation,
+			AllowSnapshotIsolation:     db.Spec.AllowSnapshotIsolation,
+			AllowReadCommittedSnapshot: db.Spec.AllowReadCommittedSnapshot,
+			Parameterization:           db.Spec.Parameterization,
+			CompatibilityLevel:         db.Spec.CompatibilityLevel})
+		if err != nil {
+			return ctrl.Result{}, err
 		}
+		condition = *db.CreatedCondition()
+		status = actionsv1alpha1.DatabaseConditionCreated
+	} else {
+		syncResponse, err := msSQL.SyncNeeded(ctx, &ms.DatabaseConfig{DatabaseName: db.Spec.Name, DatabaseID: db.Status.DatabaseID,
+			CompatibilityLevel:         db.Spec.CompatibilityLevel,
+			AllowSnapshotIsolation:     db.Spec.AllowSnapshotIsolation,
+			AllowReadCommittedSnapshot: db.Spec.AllowReadCommittedSnapshot,
+			Parameterization:           db.Spec.Parameterization})
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		if syncResponse != nil {
+			err = msSQL.AlterDatabase(ctx, db.Spec.Name, &ms.DatabaseParams{
+				AllowSnapshotIsolation:     SafeBool(syncResponse.AllowSnapshotIsolation),
+				AllowReadCommittedSnapshot: SafeBool(syncResponse.AllowReadCommittedSnapshot),
+				Parameterization:           SafeString(syncResponse.Parameterization),
+				CompatibilityLevel:         SafeInt(syncResponse.CompatibilityLevel)})
+			if err != nil {
+				return ctrl.Result{}, err
+			}
+		}
+		condition = *db.SyncedCondition()
+		status = actionsv1alpha1.DatabaseConditionSynced
 	}
 
 	meta.SetStatusCondition(&db.Status.Conditions, condition)
 	r.updateDatabaseStatus(db, status, SafeString(databaseId))
 
-	if len(childJobs.Items) == 0 {
-		job, err := r.createSyncJob(db, mi, msSQL)
-		if err != nil {
-			logger.Error(err, "unable to create sync job")
-			return ctrl.Result{}, err
-		}
-		if err := r.Create(ctx, job); err != nil {
-			logger.Error(err, "unable to create Job for Sync", "job", job)
-			return ctrl.Result{}, err
-		}
-	}
+	// if len(childJobs.Items) == 0 {
+	// 	job, err := r.createSyncJob(db, mi, msSQL)
+	// 	if err != nil {
+	// 		logger.Error(err, "unable to create sync job")
+	// 		return ctrl.Result{}, err
+	// 	}
+	// 	if err := r.Create(ctx, job); err != nil {
+	// 		logger.Error(err, "unable to create Job for Sync", "job", job)
+	// 		return ctrl.Result{}, err
+	// 	}
+	// }
 	/******************************************************************************************************************/
 
 	// var dbName *string

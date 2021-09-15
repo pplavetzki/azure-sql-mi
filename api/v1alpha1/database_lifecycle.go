@@ -8,6 +8,7 @@ const (
 	DatabaseConditionPending  string = "Pending"
 	DatabaseConditionCreating string = "Creating"
 	DatabaseConditionCreated  string = "Created"
+	DatabaseConditionSynced   string = "Synced"
 	DatabaseConditionError    string = "Errored"
 	DatabaseConditionUpdating string = "Updating"
 	DatabaseConditionUpdated  string = "Updated"
@@ -17,6 +18,7 @@ const (
 	DatabaseConditionReasonPending  string = "PendingDatabase"
 	DatabaseConditionReasonCreating string = "CreatingDatabase"
 	DatabaseConditionReasonCreated  string = "CreatedDatabase"
+	DatabaseConditionReasonSynced   string = "SyncedDatabase"
 	DatabaseConditionReasonError    string = "ErroredDatabase"
 	DatabaseConditionReasonUpdating string = "UpdatingDatabase"
 	DatabaseConditionReasonUpdated  string = "UpdatedDatabase"
@@ -35,6 +37,11 @@ func (d *Database) CreatingCondition() *metav1.Condition {
 func (d *Database) CreatedCondition() *metav1.Condition {
 	return &metav1.Condition{Type: DatabaseConditionCreated, Status: metav1.ConditionTrue,
 		Reason: DatabaseConditionReasonCreated, Message: "Database successfully created"}
+}
+
+func (d *Database) SyncedCondition() *metav1.Condition {
+	return &metav1.Condition{Type: DatabaseConditionSynced, Status: metav1.ConditionTrue,
+		Reason: DatabaseConditionReasonSynced, Message: "Database successfully synced"}
 }
 
 func (d *Database) ErroredCondition() *metav1.Condition {

@@ -45,7 +45,12 @@ type DatabaseSpec struct {
 	// Port where Sql Server is listening
 	Port int `json:"port"`
 	// CollationName
-	CollationName string `json:"collationName,omitempty"`
+	Collation string `json:"collation,omitempty"`
+	// AllowSnapshotIsolation
+	AllowSnapshotIsolation     bool   `json:"allowSnapshotIsolation,omitempty"`
+	AllowReadCommittedSnapshot bool   `json:"allowReadCommittedSnapshot,omitempty"`
+	Parameterization           string `json:"parameterization,omitempty"`
+	CompatibilityLevel         int    `json:"compatibilityLevel,omitempty"`
 	// SQLManagedInstance name of the managed instance to create database in
 	// this is used to query for the status of the instance as well as
 	// primary endpoint and connection info
