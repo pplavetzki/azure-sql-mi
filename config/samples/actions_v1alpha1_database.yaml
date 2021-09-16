@@ -1,10 +1,10 @@
 apiVersion: actions.msft.isd.coe.io/v1alpha1
 kind: Database
 metadata:
-  name: database-rbc1
+  name: database-rbc
 spec:
   # Add fields here
-  name: MyDatabase1
+  name: MyDatabase2
   server: 20.97.173.244
   port: 1433
   collation: SQL_Latin1_General_CP1_CS_AS

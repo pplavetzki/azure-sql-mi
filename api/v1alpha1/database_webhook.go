@@ -80,6 +80,12 @@ func (r *Database) ValidateUpdate(old runtime.Object) error {
 			schema.GroupKind{Group: "actions.msft.isd.coe.io", Kind: "Database"},
 			r.Name, allErrs)
 	}
+	if r.Spec.Collation != curr.Spec.Collation {
+		allErrs = append(allErrs, field.Invalid(field.NewPath("spec").Child("collation"), r.Spec.Collation, "cannot change the collation of the database"))
+		return apierrors.NewInvalid(
+			schema.GroupKind{Group: "actions.msft.isd.coe.io", Kind: "Database"},
+			r.Name, allErrs)
+	}
 	return nil
 }
 

@@ -178,62 +178,18 @@ func (r *DatabaseReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	/*******************************************************************************************************************
 	* Let's do sync logic here...
 	/******************************************************************************************************************/
-	// isJobFinished := func(job *batch.Job) (bool, batch.JobConditionType) {
-	// 	for _, c := range job.Status.Conditions {
-	// 		if (c.Type == batch.JobComplete || c.Type == batch.JobFailed) && c.Status == corev1.ConditionTrue {
-	// 			return true, c.Type
-	// 		}
-	// 	}
-
-	// 	return false, ""
-	// }
-
-	// var childJobs batch.JobList
 	status := "Pending"
 	condition := *db.PendingCondition()
 	var databaseId *string
 
 	databaseId = &db.Status.DatabaseID
 
-	// var activeJobs []*batch.Job
-	// var successfulJobs []*batch.Job
-	// var failedJobs []*batch.Job
-
-	// if err := r.List(ctx, &childJobs, client.InNamespace(req.Namespace), client.MatchingFields{jobOwnerKey: req.Name}); err != nil {
-	// 	logger.Error(err, "unable to list child Jobs")
-	// 	return ctrl.Result{}, err
-	// }
-
-	// for i, job := range childJobs.Items {
-	// 	_, finishedType := isJobFinished(&job)
-	// 	switch finishedType {
-	// 	case "": // ongoing
-	// 		status = "Syncing"
-	// 		condition = *db.CreatingCondition()
-	// 		activeJobs = append(activeJobs, &childJobs.Items[i])
-	// 	case batch.JobFailed:
-	// 		status = "Errored"
-	// 		condition = *db.ErroredCondition()
-	// 		failedJobs = append(failedJobs, &childJobs.Items[i])
-	// 	case batch.JobComplete:
-	// 		status = "Synced"
-	// 		condition = *db.CreatedCondition()
-	// 		if db.Status.DatabaseID == "" {
-	// 			databaseId, err = ms.QueryJobPod(ctx, db.Namespace, job.Name)
-	// 		}
-	// 		if err != nil {
-	// 			logger.Error(err, "failed to get logs from job", "job", job.Name)
-	// 		}
-	// 		successfulJobs = append(successfulJobs, &childJobs.Items[i])
-	// 	}
-	// }
-
 	if db.Status.DatabaseID == "" {
-		databaseId, err = msSQL.CreateDatabase(ctx, db.Spec.Name, &ms.DatabaseParams{Collation: db.Spec.Collation,
-			AllowSnapshotIsolation:     db.Spec.AllowSnapshotIsolation,
-			AllowReadCommittedSnapshot: db.Spec.AllowReadCommittedSnapshot,
-			Parameterization:           db.Spec.Parameterization,
-			CompatibilityLevel:         db.Spec.CompatibilityLevel})
+		databaseId, err = msSQL.CreateDatabase(ctx, db.Spec.Name, &ms.DatabaseParams{Collation: ms.SetString(db.Spec.Collation),
+			AllowSnapshotIsolation:     &db.Spec.AllowSnapshotIsolation,
+			AllowReadCommittedSnapshot: &db.Spec.AllowReadCommittedSnapshot,
+			Parameterization:           &db.Spec.Parameterization,
+			CompatibilityLevel:         &db.Spec.CompatibilityLevel})
 		if err != nil {
 			return ctrl.Result{}, err
 		}
@@ -249,7 +205,7 @@ func (r *DatabaseReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 			return ctrl.Result{}, err
 		}
 		if syncResponse != nil {
-			err = msSQL.AlterDatabase(ctx, db.Spec.Name, &ms.AlterParams{
+			err = msSQL.AlterDatabase(ctx, db.Spec.Name, &ms.DatabaseParams{
 				AllowSnapshotIsolation:     syncResponse.AllowSnapshotIsolation,
 				AllowReadCommittedSnapshot: syncResponse.AllowReadCommittedSnapshot,
 				Parameterization:           syncResponse.Parameterization,
@@ -257,103 +213,17 @@ func (r *DatabaseReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 			if err != nil {
 				return ctrl.Result{}, err
 			}
+		} else {
+			logger.Info("sync not needed, database and k8s state the same")
 		}
 		condition = *db.SyncedCondition()
 		status = actionsv1alpha1.DatabaseConditionSynced
 	}
 
 	meta.SetStatusCondition(&db.Status.Conditions, condition)
-	r.updateDatabaseStatus(db, status, SafeString(databaseId))
+	r.updateDatabaseStatus(db, status, ms.SafeString(databaseId))
 
-	// if len(childJobs.Items) == 0 {
-	// 	job, err := r.createSyncJob(db, mi, msSQL)
-	// 	if err != nil {
-	// 		logger.Error(err, "unable to create sync job")
-	// 		return ctrl.Result{}, err
-	// 	}
-	// 	if err := r.Create(ctx, job); err != nil {
-	// 		logger.Error(err, "unable to create Job for Sync", "job", job)
-	// 		return ctrl.Result{}, err
-	// 	}
-	// }
-	/******************************************************************************************************************/
-
-	// var dbName *string
-
-	// setID := db.Annotations["mssql/db_id"]
-	// if setID != "" {
-	// 	valId, _ := strconv.Atoi(setID)
-	// 	dbName, err = msSQL.FindDatabaseName(ctx, valId)
-
-	// 	// This means that the database has probably been deleted outside of the CRD
-	// 	if err != nil {
-	// 		return ctrl.Result{}, err
-	// 	}
-	// 	if dbName == nil {
-	// 		return ctrl.Result{}, fmt.Errorf("database not found, has it been deleted?")
-	// 	}
-
-	// 	meta.SetStatusCondition(&db.Status.Conditions, *db.UpdatingCondition())
-
-	// 	err := msSQL.AlterDatabase(ctx, db)
-	// 	if err != nil {
-	// 		meta.SetStatusCondition(&db.Status.Conditions, *db.ErroredCondition())
-	// 		r.updateDatabaseStatus(db, "Error")
-	// 		logger.Info("failed to alter the database", "name", err.Error())
-	// 		return ctrl.Result{}, err
-	// 	}
-
-	// 	meta.SetStatusCondition(&db.Status.Conditions, *db.UpdatedCondition())
-	// } else {
-	// 	var dbID string
-	// 	meta.SetStatusCondition(&db.Status.Conditions, *db.CreatingCondition())
-	// 	id, err := msSQL.CreateDatabase(ctx, db)
-	// 	if err != nil {
-	// 		meta.SetStatusCondition(&db.Status.Conditions, *db.ErroredCondition())
-	// 		r.updateDatabaseStatus(db, "Error")
-	// 		logger.Info("failed to create the database", "name", err.Error())
-	// 		return ctrl.Result{}, err
-	// 	}
-	// 	if id != nil {
-	// 		dbID = *id
-	// 	} else {
-	// 		return ctrl.Result{}, fmt.Errorf("failed to return the database id for name: %s", db.Spec.Name)
-	// 	}
-	// 	pw := AnnotationPatch{
-	// 		Logger:     logger,
-	// 		DatabaseID: dbID,
-	// 	}
-	// 	err = r.Patch(ctx, db, pw)
-	// 	if err != nil {
-	// 		logger.Info("failed to patch the database with the database id", "error", err.Error())
-	// 		return ctrl.Result{}, err
-	// 	}
-	// 	meta.SetStatusCondition(&db.Status.Conditions, *db.CreatedCondition())
-	// }
-
-	// r.updateDatabaseStatus(db, "Created")
 	return ctrl.Result{}, nil
-}
-
-func SafeString(s *string) string {
-	if s == nil {
-		return ""
-	}
-	return *s
-}
-
-func SafeInt(i *int) int {
-	if i == nil {
-		return 0
-	}
-	return *i
-}
-
-func SafeBool(b *bool) bool {
-	if b == nil {
-		return false
-	}
-	return *b
 }
 
 func (r *DatabaseReconciler) finalizeDatabase(ctx context.Context, db *actionsv1alpha1.Database, mssql *ms.MSSql) error {

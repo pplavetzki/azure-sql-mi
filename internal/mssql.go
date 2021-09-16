@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	_ "github.com/denisenkom/go-mssqldb"
+	"github.com/go-logr/logr"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
@@ -23,11 +24,11 @@ type MSSql struct {
 }
 
 type DatabaseParams struct {
-	Collation                  string
-	AllowSnapshotIsolation     bool
-	AllowReadCommittedSnapshot bool
-	Parameterization           string
-	CompatibilityLevel         int
+	Collation                  *string
+	AllowSnapshotIsolation     *bool
+	AllowReadCommittedSnapshot *bool
+	Parameterization           *string
+	CompatibilityLevel         *int
 }
 
 type AlterParams struct {
@@ -82,13 +83,6 @@ type SyncResponse struct {
 	AllowReadCommittedSnapshot *bool
 }
 
-func Safe(s *string) string {
-	if s == nil {
-		return ""
-	}
-	return *s
-}
-
 func (db *MSSql) SyncNeeded(ctx context.Context, params *DatabaseConfig) (*SyncResponse, error) {
 	_ = log.FromContext(ctx)
 	logger := log.Log
@@ -107,8 +101,8 @@ func (db *MSSql) SyncNeeded(ctx context.Context, params *DatabaseConfig) (*SyncR
 		if err != nil {
 			return nil, err
 		}
-		if Safe(dn) != params.DatabaseName {
-			return nil, fmt.Errorf("database name: %s does not match the name does not match the expected name %s", Safe(dn), params.DatabaseName)
+		if SafeString(dn) != params.DatabaseName {
+			return nil, fmt.Errorf("database name: %s does not match the name does not match the expected name %s", SafeString(dn), params.DatabaseName)
 		}
 	}
 
@@ -334,10 +328,14 @@ func (db *MSSql) CreateDatabase(ctx context.Context, databaseName string, params
 	if err != nil {
 		return nil, err
 	}
+	// now we need to alter database with params
+	if err = executeAlterCommands(db.DB, logger, databaseName, params); err != nil {
+		return nil, err
+	}
 	return db.FindDatabaseID(ctx, databaseName)
 }
 
-func (db *MSSql) AlterDatabase(ctx context.Context, databaseName string, params *AlterParams) error {
+func (db *MSSql) AlterDatabase(ctx context.Context, databaseName string, params *DatabaseParams) error {
 	_ = log.FromContext(ctx)
 	logger := log.Log
 
@@ -358,11 +356,15 @@ func (db *MSSql) AlterDatabase(ctx context.Context, databaseName string, params 
 		return err
 	}
 
+	return executeAlterCommands(db.DB, logger, databaseName, params)
+}
+
+func executeAlterCommands(db *sql.DB, logger logr.Logger, databaseName string, params *DatabaseParams) error {
 	altStatements := buildAlterSQL(databaseName, params)
 	errors := []error{}
 	if len(altStatements) > 0 {
 		for _, alter := range altStatements {
-			_, err = db.DB.Exec(alter)
+			_, err := db.Exec(alter)
 			if err != nil {
 				logger.V(0).Info(err.Error())
 				errors = append(errors, err)
@@ -372,7 +374,6 @@ func (db *MSSql) AlterDatabase(ctx context.Context, databaseName string, params 
 	if len(errors) > 0 {
 		return fmt.Errorf("errors while running alter on database: %s", databaseName)
 	}
-
 	return nil
 }
 
@@ -384,7 +385,7 @@ func onOff(value bool) string {
 	}
 }
 
-func buildAlterSQL(databaseName string, params *AlterParams) []string {
+func buildAlterSQL(databaseName string, params *DatabaseParams) []string {
 	altStatements := []string{}
 	altTemplate := fmt.Sprintf("Alter DATABASE %s ", databaseName)
 
@@ -409,12 +410,10 @@ func buildDatabaseSQL(verb string, databaseName string, params *DatabaseParams) 
 
 	fmt.Fprintf(&b, "%s DATABASE %s ", verb, databaseName)
 
-	if params.Collation != "" {
-		fmt.Fprintf(&b, "Collate %s", params.Collation)
+	if params.Collation != nil {
+		fmt.Fprintf(&b, "Collate %s", SafeString(params.Collation))
 		count++
 	}
-	if verb == "ALTER" && count == 0 {
-		return ""
-	}
+
 	return b.String()
 }
