@@ -28,3 +28,5 @@ testbin/*
 config/samples/creds.yaml
 SQLCMD.Dockerfile
 sql-mi.json
+hack/create-bastion.sh
+sql-error.txt
