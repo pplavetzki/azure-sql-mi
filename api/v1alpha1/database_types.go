@@ -39,11 +39,11 @@ type DatabaseSpec struct {
 	// Name is the Database name.
 	Name string `json:"name"`
 	// Server is the sql server (fqdn/ip addresss)
-	Server string `json:"server"`
+	Server string `json:"server,omitempty"`
 	// CredentialsSecret is the name of the secret to use for the sql server login credentials
-	Credentials CredentialsSecret `json:"credentials"`
+	Credentials CredentialsSecret `json:"credentials,omitempty"`
 	// Port where Sql Server is listening
-	Port int `json:"port"`
+	Port int `json:"port,omitempty"`
 	// CollationName
 	Collation string `json:"collation,omitempty"`
 	// AllowSnapshotIsolation

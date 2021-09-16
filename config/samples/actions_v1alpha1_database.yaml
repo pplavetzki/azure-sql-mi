@@ -5,15 +5,15 @@ metadata:
 spec:
   # Add fields here
   name: MyDatabase2
-  server: 20.97.173.244
-  port: 1433
+  # server: 20.97.173.244
+  # port: 1433
   collation: SQL_Latin1_General_CP1_CS_AS
   sqlManagedInstance: jumpstart-sql
   parameterization: simple # options:[simple, forced]
-  allowSnapshotIsolation: true # optional
-  allowReadCommittedSnapshot: true
+  allowSnapshotIsolation: false # optional
+  allowReadCommittedSnapshot: false
   compatibilityLevel: 150 # optional
-  credentials:
-    name: credentials
-    passwordKey: password
-    usernameKey: username
+  # credentials:
+  #   name: credentials
+  #   passwordKey: password
+  #   usernameKey: username

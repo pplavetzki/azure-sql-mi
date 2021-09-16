@@ -95,10 +95,7 @@ spec:
                   as well as primary endpoint and connection info
                 type: string
             required:
-            - credentials
             - name
-            - port
-            - server
             - sqlManagedInstance
             type: object
           status:

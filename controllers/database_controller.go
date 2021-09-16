@@ -143,8 +143,8 @@ func (r *DatabaseReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 
 	// This is the creating a MSSql Server `Provider`
 	// db.Spec.Server
-	// msSQL := ms.NewMSSql(fmt.Sprintf("%s-p-svc", db.Spec.SQLManagedInstance), string(username), string(password), db.Spec.Port)
-	msSQL := ms.NewMSSql(db.Spec.Server, string(username), string(password), db.Spec.Port)
+	msSQL := ms.NewMSSql(fmt.Sprintf("%s-p-svc", db.Spec.SQLManagedInstance), string(username), string(password), db.Spec.Port)
+	// msSQL := ms.NewMSSql(db.Spec.Server, string(username), string(password), db.Spec.Port)
 	// Let's look at the status here first
 
 	/*******************************************************************************************************************
