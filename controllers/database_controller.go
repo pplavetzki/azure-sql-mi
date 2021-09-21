@@ -42,10 +42,6 @@ import (
 
 const databaseFinalizer = "actions.msft.isd.coe.io/finalizer"
 
-var (
-	scheduledTimeAnnotation = "batch.tutorial.kubebuilder.io/scheduled-at"
-)
-
 // DatabaseReconciler reconciles a Database object
 type DatabaseReconciler struct {
 	client.Client
@@ -143,8 +139,8 @@ func (r *DatabaseReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 
 	// This is the creating a MSSql Server `Provider`
 	// db.Spec.Server
-	msSQL := ms.NewMSSql(fmt.Sprintf("%s-p-svc", db.Spec.SQLManagedInstance), string(username), string(password), db.Spec.Port)
-	// msSQL := ms.NewMSSql(db.Spec.Server, string(username), string(password), db.Spec.Port)
+	// msSQL := ms.NewMSSql(fmt.Sprintf("%s-p-svc", db.Spec.SQLManagedInstance), string(username), string(password), db.Spec.Port)
+	msSQL := ms.NewMSSql(db.Spec.Server, string(username), string(password), db.Spec.Port)
 	// Let's look at the status here first
 
 	/*******************************************************************************************************************
@@ -200,7 +196,7 @@ func (r *DatabaseReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 			CompatibilityLevel:         db.Spec.CompatibilityLevel,
 			AllowSnapshotIsolation:     db.Spec.AllowSnapshotIsolation,
 			AllowReadCommittedSnapshot: db.Spec.AllowReadCommittedSnapshot,
-			Parameterization:           db.Spec.Parameterization})
+			Parameterization:           db.Spec.Parameterization}, ms.State)
 		if err != nil {
 			return ctrl.Result{}, err
 		}
@@ -214,7 +210,9 @@ func (r *DatabaseReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 				return ctrl.Result{}, err
 			}
 		} else {
-			logger.Info("sync not needed, database and k8s state the same")
+			d := time.Second * 10
+			logger.Info(fmt.Sprintf("sync not needed, database and k8s state the same checking again at: %s", time.Now().Add(d).Format(time.RFC3339)))
+			return ctrl.Result{RequeueAfter: d}, nil // save this so we can re-use it elsewhere
 		}
 		condition = *db.SyncedCondition()
 		status = actionsv1alpha1.DatabaseConditionSynced

@@ -13,6 +13,13 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
+type SyncType string
+
+const (
+	Database = "Database"
+	State    = "State"
+)
+
 // MSSql interaction with sql server
 type MSSql struct {
 	Server   string `json:"server"`
@@ -83,7 +90,7 @@ type SyncResponse struct {
 	AllowReadCommittedSnapshot *bool
 }
 
-func (db *MSSql) SyncNeeded(ctx context.Context, params *DatabaseConfig) (*SyncResponse, error) {
+func (db *MSSql) SyncNeeded(ctx context.Context, params *DatabaseConfig, syncType SyncType) (*SyncResponse, error) {
 	_ = log.FromContext(ctx)
 	logger := log.Log
 
@@ -100,6 +107,9 @@ func (db *MSSql) SyncNeeded(ctx context.Context, params *DatabaseConfig) (*SyncR
 		dn, err := db.FindDatabaseName(ctx, params.DatabaseID)
 		if err != nil {
 			return nil, err
+		}
+		if dn == nil {
+			return nil, fmt.Errorf("database id: %s does not exist", params.DatabaseID)
 		}
 		if SafeString(dn) != params.DatabaseName {
 			return nil, fmt.Errorf("database name: %s does not match the name does not match the expected name %s", SafeString(dn), params.DatabaseName)
@@ -163,15 +173,27 @@ func (db *MSSql) SyncNeeded(ctx context.Context, params *DatabaseConfig) (*SyncR
 	// 	requireSync = true
 	// }
 	if params.AllowSnapshotIsolation != allowSnapshotIsolation {
-		syncResponse.AllowSnapshotIsolation = &params.AllowSnapshotIsolation
+		if syncType == State {
+			syncResponse.AllowSnapshotIsolation = &params.AllowSnapshotIsolation
+		} else {
+			syncResponse.AllowSnapshotIsolation = &allowSnapshotIsolation
+		}
 		requireSync = true
 	}
 	if params.CompatibilityLevel != sync.Database[0].CompatibilityLevel {
-		syncResponse.CompatibilityLevel = &params.CompatibilityLevel
+		if syncType == State {
+			syncResponse.CompatibilityLevel = &params.CompatibilityLevel
+		} else {
+			syncResponse.CompatibilityLevel = &sync.Database[0].CompatibilityLevel
+		}
 		requireSync = true
 	}
 	if params.Parameterization != sync.Database[0].Parameterization {
-		syncResponse.Parameterization = &params.Parameterization
+		if syncType == State {
+			syncResponse.Parameterization = &params.Parameterization
+		} else {
+			syncResponse.Parameterization = &sync.Database[0].Parameterization
+		}
 		requireSync = true
 	}
 	/**************************************************************************************************************************/
