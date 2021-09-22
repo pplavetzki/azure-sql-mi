@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strconv"
 
 	"github.com/go-logr/logr"
 	"github.com/go-logr/zapr"
@@ -130,7 +131,6 @@ func connectionInfo(db *actionsv1alpha1.Database) (string, string, error) {
 	if mi.Status.State != "Ready" {
 		return "", "", fmt.Errorf("the sql managed instance is not in a `Ready` state, current status is: %v", mi.Status)
 	}
-	// sec := &corev1.Secret{}
 
 	sec, err := clientset.CoreV1().Secrets(mi.Spec.LoginRef.Namespace).Get(context.TODO(), mi.Spec.LoginRef.Name, v1.GetOptions{})
 	if err != nil {
@@ -155,6 +155,9 @@ func main() {
 
 	namespace := getEnvOrFail("NAMESPACE")
 	databaseCRD := getEnvOrFail("DATABASE_CRD")
+	password := getEnvOrFail("DATABASE_PASSWORD")
+	user := getEnvOrFail("DATABASE_USER")
+	port := getEnvOrFail("DATABASE_PORT")
 
 	if os.Getenv("KUBECONFIG") != "" {
 		path := os.Getenv("KUBECONFIG")
@@ -197,32 +200,16 @@ func main() {
 		Name:      databaseCRD,
 	}, db)
 
-	username, password, err := connectionInfo(db)
-	if err != nil {
-		panic(err)
-	}
 	var server string
 	if os.Getenv("MS_SERVER") != "" {
 		server = os.Getenv("MS_SERVER")
 	} else {
 		server = fmt.Sprintf("%s-p-svc", db.Spec.SQLManagedInstance)
 	}
-	msSQL := ms.NewMSSql(server, username, password, db.Spec.Port)
+	p, err := strconv.Atoi(port)
+	if err != nil {
+		panic(err)
+	}
+	msSQL := ms.NewMSSql(server, user, password, p)
 	performSync(msSQL, db)
-	// use the current context in kubeconfig
-
-	// server := getEnvOrFail("MS_SERVER")
-	// user := getEnvOrFail("DB_USER")
-	// password := getEnvOrFail("DB_PASSWORD")
-	// portVal := getEnvOrFail("DB_PORT")
-	// databaseName := getEnvOrFail("DB_NAME")
-	// databaseID := os.Getenv("DB_ID")
-
-	// port, err := strconv.Atoi(portVal)
-	// if err != nil {
-	// 	panic(fmt.Errorf("failed to convert port value to int: %s", portVal))
-	// }
-
-	// mqSQL := ms.NewMSSql(server, user, password, port)
-	// performSync(mqSQL, databaseID, databaseName)
 }

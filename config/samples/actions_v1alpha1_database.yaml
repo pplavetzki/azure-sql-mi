@@ -13,6 +13,7 @@ spec:
   allowSnapshotIsolation: true # optional
   allowReadCommittedSnapshot: false
   compatibilityLevel: 160 # optional
+  schedule: "0 */12 * * *" # "*/1 * * * *"
   # credentials:
   #   name: credentials
   #   passwordKey: password

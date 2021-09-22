@@ -86,6 +86,10 @@ spec:
               port:
                 description: Port where Sql Server is listening
                 type: integer
+              schedule:
+                description: Schedule how often the database to k8s state should occur
+                  in cron format
+                type: string
               server:
                 description: Server is the sql server (fqdn/ip addresss)
                 type: string

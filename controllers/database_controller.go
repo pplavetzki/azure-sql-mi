@@ -20,7 +20,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"time"
 
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -41,6 +40,7 @@ import (
 )
 
 const databaseFinalizer = "actions.msft.isd.coe.io/finalizer"
+const defaultSchedule = "0 */12 * * *"
 
 // DatabaseReconciler reconciles a Database object
 type DatabaseReconciler struct {
@@ -80,8 +80,8 @@ func (r *DatabaseReconciler) updateDatabaseStatus(db *actionsv1alpha1.Database, 
 //+kubebuilder:rbac:groups=actions.msft.isd.coe.io,resources=databases/finalizers,verbs=update
 //+kubebuilder:rbac:groups=sql.arcdata.microsoft.com,resources=sqlmanagedinstances,verbs=get;list;watch
 //+kubebuilder:rbac:groups=core,resources=secrets,verbs=get;list;watch
-//+kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch;create;update;patch;delete
-//+kubebuilder:rbac:groups=batch,resources=jobs/status,verbs=get
+//+kubebuilder:rbac:groups=batch,resources=cronjobs,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=batch,resources=cronjobs/status,verbs=get
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -209,13 +209,52 @@ func (r *DatabaseReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 			if err != nil {
 				return ctrl.Result{}, err
 			}
-		} else {
-			d := time.Second * 10
-			logger.Info(fmt.Sprintf("sync not needed, database and k8s state the same checking again at: %s", time.Now().Add(d).Format(time.RFC3339)))
-			return ctrl.Result{RequeueAfter: d}, nil // save this so we can re-use it elsewhere
 		}
+
 		condition = *db.SyncedCondition()
 		status = actionsv1alpha1.DatabaseConditionSynced
+	}
+
+	// Check if the cronjob already exists, if not create a new one
+	found := &batch.CronJob{}
+	err = r.Get(ctx, types.NamespacedName{Name: db.Name, Namespace: db.Namespace}, found)
+	if err != nil && errors.IsNotFound(err) {
+		// Define a new cronjob
+		dep, err := r.createSyncJob(db, mi, msSQL)
+		if err != nil {
+			logger.Error(err, "Failed to create new CronJob")
+		}
+		logger.Info("Creating a new CronJob", "CronJob.Namespace", dep.Namespace, "CronJob.Name", dep.Name)
+		err = r.Create(ctx, dep)
+		if err != nil {
+			logger.Error(err, "Failed to create new CronJob", "CronJob.Namespace", dep.Namespace, "CronJob.Name", dep.Name)
+			return ctrl.Result{}, err
+		}
+		if status == actionsv1alpha1.DatabaseConditionCreated {
+			meta.SetStatusCondition(&db.Status.Conditions, condition)
+			r.updateDatabaseStatus(db, status, ms.SafeString(databaseId))
+		}
+		// CronJob created successfully - return and requeue
+		return ctrl.Result{Requeue: true}, nil
+	} else if err != nil {
+		logger.Error(err, "Failed to get CronJob")
+		return ctrl.Result{}, err
+	}
+
+	// Ensure the deployment size is the same as the spec
+	sched := db.Spec.Schedule
+	if sched == "" {
+		sched = defaultSchedule
+	}
+	if found.Spec.Schedule != sched {
+		found.Spec.Schedule = sched
+		err = r.Update(ctx, found)
+		if err != nil {
+			logger.Error(err, "Failed to update Deployment", "Deployment.Namespace", found.Namespace, "Deployment.Name", found.Name)
+			return ctrl.Result{}, err
+		}
+		// Spec updated - return and requeue
+		return ctrl.Result{Requeue: true}, nil
 	}
 
 	meta.SetStatusCondition(&db.Status.Conditions, condition)
@@ -236,70 +275,95 @@ var (
 	apiGVStr    = actionsv1alpha1.GroupVersion.String()
 )
 
-func (r *DatabaseReconciler) createSyncJob(db *actionsv1alpha1.Database, mi *ms.SQLManagedInstance, msSQL *ms.MSSql) (*batch.Job, error) {
+func (r *DatabaseReconciler) createSyncJob(db *actionsv1alpha1.Database, mi *ms.SQLManagedInstance, msSQL *ms.MSSql) (*batch.CronJob, error) {
 	// We want job names for a given nominal start time to have a deterministic name to avoid the same job being created twice
-	sched := time.Now()
-	name := fmt.Sprintf("%s-%d", db.Name, sched.Unix())
+	// sched := time.Now()
+	// name := fmt.Sprintf("%s-%d", db.Name, sched.Unix())
+	cronSchedule := defaultSchedule
 
-	job := &batch.Job{
+	if db.Spec.Schedule != "" {
+		cronSchedule = db.Spec.Schedule
+	}
+
+	job := &batch.CronJob{
 		ObjectMeta: metav1.ObjectMeta{
 			Labels:      make(map[string]string),
 			Annotations: make(map[string]string),
-			Name:        name,
+			Name:        db.Name,
 			Namespace:   db.Namespace,
 		},
-		Spec: batch.JobSpec{
-			Template: corev1.PodTemplateSpec{
-				Spec: corev1.PodSpec{
-					Containers: []corev1.Container{
-						{
-							Name:  "sync",
-							Image: "paulplavetzki/sync:v0.0.3",
-							// EnvFrom: []corev1.EnvFromSource{
-							// 	corev1.EnvFromSource{
-							// 		SecretRef: &corev1.SecretEnvSource{
-							// 			LocalObjectReference: corev1.LocalObjectReference{
-							// 				Name: "jumpstart-sql-login-secret",
-							// 			},
-							// 		},
-							// 	},
-							// },
-							Env: []corev1.EnvVar{
+		Spec: batch.CronJobSpec{
+			Schedule: cronSchedule,
+			JobTemplate: batch.JobTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels:      make(map[string]string),
+					Annotations: make(map[string]string),
+					Name:        db.Name,
+					Namespace:   db.Namespace,
+				},
+				Spec: batch.JobSpec{
+					Template: corev1.PodTemplateSpec{
+						Spec: corev1.PodSpec{
+							ServiceAccountName: "azure-sql-mi-controller-manager",
+							Containers: []corev1.Container{
+								// {
+								// 	Name:  "proxy",
+								// 	Image: "bitnami/kubectl:latest",
+								// 	Args: []string{
+								// 		"proxy",
+								// 		"--port=9090",
+								// 		"&",
+								// 	},
+								// },
 								{
-									Name:  "DB_PASSWORD",
-									Value: msSQL.Password,
-								},
-								{
-									Name:  "DB_USER",
-									Value: msSQL.User,
-								},
-								{
-									Name:  "DB_NAME",
-									Value: db.Spec.Name,
-								},
-								{
-									Name:  "DB_PORT",
-									Value: fmt.Sprintf("%d", msSQL.Port),
-								},
-								{
-									Name:  "MS_SERVER",
-									Value: msSQL.Server,
+									Name:  "sync",
+									Image: "paulplavetzki/sync:v0.0.11",
+									Env: []corev1.EnvVar{
+										{
+											Name:  "DATABASE_CRD",
+											Value: db.Name,
+										},
+										{
+											Name:  "NAMESPACE",
+											Value: db.Namespace,
+										},
+										{
+											Name:  "DATABASE_PASSWORD",
+											Value: msSQL.Password,
+										},
+										{
+											Name:  "DATABASE_USER",
+											Value: msSQL.User,
+										},
+										{
+											Name:  "DATABASE_PORT",
+											Value: fmt.Sprintf("%d", msSQL.Port),
+										},
+										// {
+										// 	Name: "NAMESPACE",
+										// 	ValueFrom: &corev1.EnvVarSource{
+										// 		FieldRef: &corev1.ObjectFieldSelector{
+										// 			FieldPath: "metadata.namespace",
+										// 		},
+										// 	},
+										// },
+									},
 								},
 							},
+							RestartPolicy: corev1.RestartPolicyOnFailure,
 						},
 					},
-					RestartPolicy: corev1.RestartPolicyOnFailure,
 				},
 			},
 		},
 	}
-	if db.Status.DatabaseID != "" {
-		dbEnv := corev1.EnvVar{
-			Name:  "DB_ID",
-			Value: db.Status.DatabaseID,
-		}
-		job.Spec.Template.Spec.Containers[0].Env = append(job.Spec.Template.Spec.Containers[0].Env, dbEnv)
-	}
+	// if db.Status.DatabaseID != "" {
+	// 	dbEnv := corev1.EnvVar{
+	// 		Name:  "DB_ID",
+	// 		Value: db.Status.DatabaseID,
+	// 	}
+	// 	job.Spec.Template.Spec.Containers[0].Env = append(job.Spec.Template.Spec.Containers[0].Env, dbEnv)
+	// }
 	// for k, v := range cronJob.Spec.JobTemplate.Annotations {
 	// 	job.Annotations[k] = v
 	// }
@@ -337,6 +401,6 @@ func (r *DatabaseReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&actionsv1alpha1.Database{}).
-		Owns(&batch.Job{}).
+		Owns(&batch.CronJob{}).
 		Complete(r)
 }

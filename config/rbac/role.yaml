@@ -35,7 +35,7 @@ rules:
 - apiGroups:
   - batch
   resources:
-  - jobs
+  - cronjobs
   verbs:
   - create
   - delete
@@ -47,7 +47,7 @@ rules:
 - apiGroups:
   - batch
   resources:
-  - jobs/status
+  - cronjobs/status
   verbs:
   - get
 - apiGroups:

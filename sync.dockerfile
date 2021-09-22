@@ -5,8 +5,9 @@ WORKDIR /app
 COPY go.* ./
 RUN go mod download
 
-COPY cmd/sync/*.go ./
+COPY cmd/cron/*.go ./
 COPY internal/ internal/
+COPY api/ api/
 
 RUN go build -o /sync-db
 
